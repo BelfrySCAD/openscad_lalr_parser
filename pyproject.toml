@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "openscad_lalr_parser"
-version = "0.1.0"
+version = "1.0.0"
 description = "A fast LALR(1) parser for the OpenSCAD language with AST generation, powered by Lark."
 readme = "README.md"
 authors = [
