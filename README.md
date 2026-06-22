@@ -230,9 +230,9 @@ All AST nodes inherit from `ASTNode`. The main categories are:
 | Inline comment attachment | ✓ | ✓ |
 | Serialization (JSON/YAML) | ✓ | ✓ |
 | Pretty-printing | ✓ | ✓ |
-| Source maps | — | ✓ |
-| CLI tool | — | ✓ (`openscad-lalr`) |
-| Disk caching | — | ✓ |
+| Source maps | ✓ | ✓ |
+| CLI tool | ✓ (`openscad-parser`) | ✓ (`openscad-lalr`) |
+| Disk caching | ✓ | ✓ |
 | Performance | Baseline | Faster (LALR, no backtracking) |
 
 ## Development
