@@ -602,3 +602,108 @@ class TestCoalesceParenBracket:
         lines = out.split("\n")
         for i in range(len(lines) - 1):
             assert not (lines[i].strip() == ")" and lines[i + 1].lstrip().startswith("["))
+
+
+# --- CommentedExpr / inline block comment tests ---
+
+def _fmt_with_comments(code: str) -> str:
+    """Parse with include_comments=True -> pretty-print."""
+    return to_openscad(getASTfromString(code, include_comments=True))
+
+
+class TestInlineBlockComments:
+    """Tests for /* */ comments inside expressions (CommentedExpr support)."""
+
+    def test_positional_argument(self):
+        out = _fmt_with_comments("x = foo(/* hi */ a, b);")
+        assert "/* hi */" in out
+        assert "foo(" in out
+
+    def test_named_argument_value(self):
+        out = _fmt_with_comments("foo(x = /* val */ 1);")
+        assert "/* val */" in out
+
+    def test_vector_element_first(self):
+        out = _fmt_with_comments("v = [/* y */ 1, 2, 3];")
+        assert "/* y */" in out
+
+    def test_vector_element_middle(self):
+        out = _fmt_with_comments("v = [1, /* y */ 2, 3];")
+        assert "/* y */" in out
+
+    def test_ternary_true_arm(self):
+        out = _fmt_with_comments("x = c ? /* yes */ a : b;")
+        assert "/* yes */" in out
+
+    def test_ternary_false_arm(self):
+        out = _fmt_with_comments("x = c ? a : /* no */ b;")
+        assert "/* no */" in out
+
+    def test_binary_op_comment_does_not_crash(self):
+        out = _fmt_with_comments("x = a + /* scale */ b;")
+        assert "/* scale */" in out
+        assert "a" in out and "b" in out
+
+    def test_without_include_comments_no_commentedexpr(self):
+        from openscad_lalr_parser.nodes import CommentedExpr
+        nodes = getASTfromString("x = foo(/* hi */ a, b);", include_comments=False)
+        def _has_commented_expr(node):
+            if isinstance(node, CommentedExpr):
+                return True
+            for attr in vars(node).values():
+                if isinstance(attr, list):
+                    for item in attr:
+                        if hasattr(item, '__dataclass_fields__') and _has_commented_expr(item):
+                            return True
+                elif hasattr(attr, '__dataclass_fields__') and _has_commented_expr(attr):
+                    return True
+            return False
+        assert not _has_commented_expr(nodes[0])
+
+    def test_let_expr_body_with_comment(self):
+        out = _fmt_with_comments("x = let(a = 1) /* note */ a + 1;")
+        assert "/* note */" in out
+
+    def test_parameter_default_with_comment(self):
+        out = _fmt_with_comments("function f(x = /* def */ 1) = x;")
+        assert "/* def */" in out
+
+    # --- Trailing comments ---
+
+    def test_trailing_after_arg(self):
+        out = _fmt_with_comments("x = foo(a /* after */, b);")
+        assert "/* after */" in out
+
+    def test_trailing_after_last_arg(self):
+        out = _fmt_with_comments("x = foo(a, b /* after */);")
+        assert "/* after */" in out
+
+    def test_trailing_after_vector_element(self):
+        out = _fmt_with_comments("v = [1 /* after */, 2, 3];")
+        assert "/* after */" in out
+
+    def test_trailing_after_last_vector_element(self):
+        out = _fmt_with_comments("v = [1, 2, 3 /* after */];")
+        assert "/* after */" in out
+
+    def test_trailing_after_whole_vector_arg(self):
+        out = _fmt_with_comments("translate([0, 1, 2] /* after */) cube(1);")
+        assert "/* after */" in out
+
+    def test_trailing_after_assignment_rhs(self):
+        out = _fmt_with_comments("x = 1 /* note */;")
+        assert "/* note */" in out
+
+    def test_leading_and_trailing(self):
+        out = _fmt_with_comments("x = foo(/* before */ a /* after */, b);")
+        assert "/* before */" in out
+        assert "/* after */" in out
+
+    def test_trailing_after_function_body(self):
+        out = _fmt_with_comments("function f(x) = x + 1 /* end */;")
+        assert "/* end */" in out
+
+    def test_between_operand_and_operator_does_not_crash(self):
+        out = _fmt_with_comments("x = 3 /* str */ + 4;")
+        assert "/* str */" in out
+        assert "3" in out and "4" in out

@@ -49,6 +49,9 @@ dev = [
     "pyyaml>=6.0",
 ]
 
+[project.scripts]
+openscad-lalr = "openscad_lalr_parser.cli:main"
+
 [project.urls]
 "Homepage" = "https://github.com/BelfrySCAD/openscad_lalr_parser"
 "Repository" = "https://github.com/BelfrySCAD/openscad_lalr_parser"

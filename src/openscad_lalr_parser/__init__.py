@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -168,8 +169,169 @@ def _extract_comments(code: str, origin: str) -> list[ASTNode]:
     return comments
 
 
+def _is_inline_comment(comment: ASTNode, code: str) -> bool:
+    """Return True if the comment shares a source line with non-comment code."""
+    start = comment.position.start_offset
+    end = comment.position.end_offset
+    line_start = code.rfind('\n', 0, start)
+    line_start = 0 if line_start < 0 else line_start + 1
+    before = code[line_start:start].strip()
+    if before:
+        return True
+    if isinstance(comment, CommentSpan):
+        last_line_end = code.find('\n', end)
+        if last_line_end < 0:
+            last_line_end = len(code)
+        after = code[end:last_line_end].strip()
+        if after and not after.startswith('//') and not after.startswith('/*'):
+            return True
+    return False
+
+
+def _classify_comments(comments: list[ASTNode], code: str) -> tuple[list[ASTNode], list[ASTNode]]:
+    """Split comments into (inline, standalone) lists."""
+    inline = []
+    standalone = []
+    for c in comments:
+        if _is_inline_comment(c, code):
+            inline.append(c)
+        else:
+            standalone.append(c)
+    return inline, standalone
+
+
+_SKIP_FIELDS = frozenset(('position', 'scope', 'leading_comments', 'trailing_comments',
+                           'pre_name_comments', 'post_name_comments', 'post_params_comments'))
+
+
+def _attach_inline_comments(ast_nodes: list[ASTNode], inline_comments: list[ASTNode]) -> list[ASTNode]:
+    """Walk AST and wrap expressions adjacent to inline comments in CommentedExpr."""
+    if not inline_comments:
+        return ast_nodes
+    inline_comments.sort(key=lambda c: c.position.start_offset)
+    used: set[int] = set()
+    for node in ast_nodes:
+        _walk_attach(node, inline_comments, used)
+    return ast_nodes
+
+
+def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
+    """Recursively attach inline comments to Expression fields of node."""
+    if not isinstance(node, ASTNode) or isinstance(node, (CommentedExpr, CommentLine, CommentSpan)):
+        return
+
+    ns = node.position.start_offset
+    ne = node.position.end_offset
+
+    has_relevant = any(
+        i not in used and ns <= comments[i].position.start_offset < ne
+        for i in range(len(comments))
+    )
+    if not has_relevant:
+        for f in dataclasses.fields(node):
+            if f.name in _SKIP_FIELDS:
+                continue
+            val = getattr(node, f.name)
+            if isinstance(val, ASTNode):
+                _walk_attach(val, comments, used)
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, ASTNode):
+                        _walk_attach(item, comments, used)
+        return
+
+    # Collect wrappable Expression fields, including from non-Expression
+    # containers like PositionalArgument, NamedArgument, ParameterDeclaration.
+    # Each entry: (owner_node, field_name, list_index_or_None, expr)
+    expr_fields = []
+    non_expr_children = []
+
+    for f in dataclasses.fields(node):
+        if f.name in _SKIP_FIELDS:
+            continue
+        val = getattr(node, f.name)
+        if isinstance(val, Expression) and not isinstance(val, CommentedExpr):
+            expr_fields.append((node, f.name, None, val))
+        elif isinstance(val, ASTNode):
+            non_expr_children.append(val)
+        elif isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, Expression) and not isinstance(item, CommentedExpr):
+                    expr_fields.append((node, f.name, idx, item))
+                elif isinstance(item, ASTNode):
+                    _collect_container_exprs(item, expr_fields, non_expr_children)
+
+    expr_fields.sort(key=lambda x: x[3].position.start_offset)
+
+    leading_map: dict[int, list] = {ei: [] for ei in range(len(expr_fields))}
+    trailing_map: dict[int, list] = {ei: [] for ei in range(len(expr_fields))}
+
+    for ci, comment in enumerate(comments):
+        if ci in used:
+            continue
+        cs = comment.position.start_offset
+        if cs < ns or cs >= ne:
+            continue
+
+        attached = False
+        for ei, (owner, fname, lidx, expr) in enumerate(expr_fields):
+            es = expr.position.start_offset
+            if cs < es:
+                leading_map[ei].append((ci, comment))
+                used.add(ci)
+                attached = True
+                break
+            elif cs >= expr.position.end_offset:
+                continue
+        if not attached and expr_fields:
+            last_ei = len(expr_fields) - 1
+            if cs >= expr_fields[last_ei][3].position.end_offset:
+                trailing_map[last_ei].append((ci, comment))
+                used.add(ci)
+
+    for ei, (owner, fname, lidx, expr) in enumerate(expr_fields):
+        leading = [c for _, c in leading_map[ei]]
+        trailing = [c for _, c in trailing_map[ei]]
+
+        if leading or trailing:
+            wrapped = CommentedExpr(
+                position=expr.position,
+                leading_comments=leading,
+                trailing_comments=trailing,
+                expr=expr,
+            )
+            if lidx is None:
+                setattr(owner, fname, wrapped)
+            else:
+                getattr(owner, fname)[lidx] = wrapped
+
+        _walk_attach(expr, comments, used)
+
+    for child in non_expr_children:
+        _walk_attach(child, comments, used)
+
+
+def _collect_container_exprs(container: ASTNode, expr_fields: list, non_expr_children: list):
+    """Extract Expression fields from a non-Expression container node."""
+    found_expr = False
+    for f in dataclasses.fields(container):
+        if f.name in _SKIP_FIELDS:
+            continue
+        val = getattr(container, f.name)
+        if isinstance(val, Expression) and not isinstance(val, CommentedExpr):
+            expr_fields.append((container, f.name, None, val))
+            found_expr = True
+        elif isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, Expression) and not isinstance(item, CommentedExpr):
+                    expr_fields.append((container, f.name, idx, item))
+                    found_expr = True
+    if not found_expr:
+        non_expr_children.append(container)
+
+
 def _inject_comments(ast_nodes: list[ASTNode], comments: list[ASTNode], code: str, origin: str) -> list[ASTNode]:
-    """Merge comment nodes into AST node list based on source positions."""
+    """Merge standalone comment nodes into top-level AST node list."""
     if not comments:
         return ast_nodes
 
@@ -184,8 +346,9 @@ def _inject_comments(ast_nodes: list[ASTNode], comments: list[ASTNode], code: st
             comment = comments[comment_idx]
             cl = comment.position.line
             if prev_end_line > 0 and cl - prev_end_line > 1:
+                lines = code.split('\n')
                 for gap_line in range(prev_end_line + 1, cl):
-                    line_content = code.split('\n')[gap_line - 1] if gap_line <= len(code.split('\n')) else ''
+                    line_content = lines[gap_line - 1] if gap_line <= len(lines) else ''
                     if line_content.strip() == '':
                         result.append(BlankLine(position=Position(
                             origin=origin, line=gap_line, column=1)))
@@ -283,7 +446,9 @@ def getASTfromString(code: str, include_comments: bool = False, origin: str = "<
 
     if ast is not None and include_comments:
         comments = _extract_comments(code, origin)
-        ast = _inject_comments(ast, comments, code, origin)
+        inline, standalone = _classify_comments(comments, code)
+        _attach_inline_comments(ast, inline)
+        ast = _inject_comments(ast, standalone, code, origin)
 
     return ast
 
@@ -506,7 +671,9 @@ def _parse_single_file(file_path: str, include_comments: bool = False) -> list[A
 
     if ast is not None and include_comments:
         comments = _extract_comments(code, file_path)
-        ast = _inject_comments(ast, comments, code, file_path)
+        inline, standalone = _classify_comments(comments, code)
+        _attach_inline_comments(ast, inline)
+        ast = _inject_comments(ast, standalone, code, file_path)
 
     _ast_cache[cache_key] = (ast, current_mtime)
     _save_to_disk_cache(file_path, include_comments, current_mtime, ast)
