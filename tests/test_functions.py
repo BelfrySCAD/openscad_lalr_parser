@@ -8,6 +8,10 @@ from openscad_lalr_parser import (
     MultiplicationOp,
     Identifier,
     PrimaryCall,
+    TernaryOp,
+    LetOp,
+    NamedArgument,
+    PositionalArgument,
 )
 
 
@@ -34,6 +38,21 @@ class TestFunctionDeclaration:
         s = str(ast[0])
         assert "function" in s
         assert "add" in s
+
+    def test_function_complex_expression(self, parse):
+        ast = parse("function complex(x) = x * 2 + sin(x) * cos(x);")
+        assert isinstance(ast[0], FunctionDeclaration)
+        assert ast[0].name.name == "complex"
+
+    def test_function_ternary(self, parse):
+        ast = parse("function abs(x) = x >= 0 ? x : -x;")
+        assert isinstance(ast[0], FunctionDeclaration)
+        assert isinstance(ast[0].expr, TernaryOp)
+
+    def test_function_with_let(self, parse):
+        ast = parse("function test(x) = let(y = x * 2) y + 1;")
+        assert isinstance(ast[0], FunctionDeclaration)
+        assert isinstance(ast[0].expr, LetOp)
 
 
 class TestFunctionLiteral:
@@ -76,6 +95,43 @@ class TestFunctionLiteral:
     def test_function_call_on_literal(self, parse):
         ast = parse("x = (function(a) a * 2)(5);")
         assert isinstance(ast[0].expr, PrimaryCall)
+
+
+class TestFunctionCall:
+    def test_function_call_no_args(self, parse):
+        ast = parse("x = test();")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_single_arg(self, parse):
+        ast = parse("x = test(5);")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_multiple_args(self, parse):
+        ast = parse("x = add(1, 2);")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_named_args(self, parse):
+        ast = parse("x = test(x=1, y=2);")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_mixed_args(self, parse):
+        ast = parse("x = test(1, y=2);")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_nested(self, parse):
+        ast = parse("x = add(multiply(2, 3), 4);")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, PrimaryCall)
+
+    def test_function_call_in_expression(self, parse):
+        ast = parse("x = add(1, 2) * 3;")
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, MultiplicationOp)
 
 
 class TestFunctionDeclarationDetailed:

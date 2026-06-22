@@ -633,3 +633,21 @@ class TestPositionOffsets:
         rest_pos = restored[0].position
         assert rest_pos.start_offset == orig_pos.start_offset
         assert rest_pos.end_offset == orig_pos.end_offset
+
+    def test_ast_node_offsets_single_file(self):
+        from openscad_lalr_parser import getASTfromString, Assignment
+        ast = getASTfromString("x = 42;")
+        assert ast is not None and isinstance(ast, list)
+        node = ast[0]
+        assert isinstance(node, Assignment)
+        assert node.position.start_offset == 0
+        assert node.position.end_offset == 7
+
+    def test_ast_node_offsets_second_token(self):
+        from openscad_lalr_parser import getASTfromString, Assignment
+        ast = getASTfromString("x = 1;\ny = 2;")
+        assert ast is not None and isinstance(ast, list)
+        second = ast[1]
+        assert isinstance(second, Assignment)
+        assert second.position.start_offset == 7
+        assert second.position.end_offset == 13

@@ -212,7 +212,62 @@ def _attach_inline_comments(ast_nodes: list[ASTNode], inline_comments: list[ASTN
     used: set[int] = set()
     for node in ast_nodes:
         _walk_attach(node, inline_comments, used)
+
+    # Attach remaining unused inline comments as trailing on the nearest
+    # preceding top-level node's last expression field.
+    for ci, comment in enumerate(inline_comments):
+        if ci in used:
+            continue
+        cs = comment.position.start_offset
+        best_node = None
+        for node in ast_nodes:
+            if isinstance(node, (CommentLine, CommentSpan, BlankLine)):
+                continue
+            if node.position.end_offset <= cs:
+                best_node = node
+        if best_node is not None:
+            _attach_trailing_to_last_expr(best_node, comment)
+            used.add(ci)
+
     return ast_nodes
+
+
+def _attach_trailing_to_last_expr(node: ASTNode, comment: ASTNode):
+    """Attach a trailing comment to the last Expression field in node."""
+    last_expr_info = None
+    for f in dataclasses.fields(node):
+        if f.name in _SKIP_FIELDS:
+            continue
+        val = getattr(node, f.name)
+        if isinstance(val, Expression):
+            last_expr_info = (node, f.name, None, val)
+        elif isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, Expression):
+                    last_expr_info = (node, f.name, idx, item)
+                elif isinstance(item, ASTNode):
+                    for cf in dataclasses.fields(item):
+                        if cf.name in _SKIP_FIELDS:
+                            continue
+                        cval = getattr(item, cf.name)
+                        if isinstance(cval, Expression):
+                            last_expr_info = (item, cf.name, None, cval)
+    if last_expr_info is None:
+        return
+    owner, fname, lidx, expr = last_expr_info
+    if isinstance(expr, CommentedExpr):
+        expr.trailing_comments.append(comment)
+    else:
+        wrapped = CommentedExpr(
+            position=expr.position,
+            leading_comments=[],
+            trailing_comments=[comment],
+            expr=expr,
+        )
+        if lidx is None:
+            setattr(owner, fname, wrapped)
+        else:
+            getattr(owner, fname)[lidx] = wrapped
 
 
 def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):

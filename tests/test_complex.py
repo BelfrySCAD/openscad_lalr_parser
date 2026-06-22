@@ -292,3 +292,23 @@ class TestRealWorldExamples:
         assert result is not None
         assert isinstance(result, list)
         assert len(result) > 0
+
+    def test_reduced_tree_mode(self):
+        code = "x = 1 + 2;"
+        ast = getASTfromString(code)
+        assert ast is not None
+        assert isinstance(ast, list)
+        assert len(ast) == 1
+
+    def test_reduced_tree_complex(self):
+        code = """
+        module test(x) {
+            for (i = [0:5]) {
+                translate([i, 0, 0]) cube(1);
+            }
+        }
+        """
+        ast = getASTfromString(code)
+        assert ast is not None
+        assert isinstance(ast, list)
+        assert len(ast) >= 1

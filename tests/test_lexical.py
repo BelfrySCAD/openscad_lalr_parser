@@ -1,4 +1,4 @@
-"""Tests for lexical elements: literals, identifiers."""
+"""Tests for lexical elements: comments, strings, numbers, identifiers."""
 from openscad_lalr_parser import (
     getASTfromString,
     Assignment,
@@ -7,7 +7,106 @@ from openscad_lalr_parser import (
     BooleanLiteral,
     UndefinedLiteral,
     Identifier,
+    CommentLine,
+    CommentSpan,
+    FunctionDeclaration,
+    ModuleDeclaration,
 )
+
+
+class TestComments:
+    """Test comment parsing."""
+
+    def test_single_line_comment(self, parse):
+        """Test single-line comments parse without error."""
+        ast = parse("// This is a comment")
+        assert ast is not None
+
+    def test_single_line_comment_with_code(self, parse):
+        """Test single-line comment after code."""
+        ast = parse("x = 5; // comment")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+
+    def test_multi_line_comment(self, parse):
+        """Test multi-line comments."""
+        ast = parse("/* This is a\nmulti-line comment */")
+        assert ast is not None
+
+    def test_multi_line_comment_single_line(self, parse):
+        """Test multi-line comment on single line."""
+        ast = parse("/* comment */")
+        assert ast is not None
+
+    def test_comments_in_expressions(self, parse):
+        """Test comments within expressions."""
+        ast = parse("x = 1 + /* comment */ 2;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+
+    def test_block_comment_followed_by_block_comment(self, parse):
+        """Test block comment followed by another block comment."""
+        ast = parse("/* comment *//* another comment */")
+        assert ast is not None
+
+    def test_block_comment_followed_by_inline_comment(self, parse):
+        """Test block comment followed by an inline comment."""
+        ast = parse("/* comment */// another comment")
+        assert ast is not None
+
+    def test_inline_comment_with_nested_inline(self, parse):
+        """Test an inline comment with a nested inline is parsed as one comment."""
+        ast = parse("// comment // the same comment")
+        assert ast is not None
+
+    def test_inline_comment_with_nested_block_comment(self, parse):
+        """Test an inline comment with a nested block comment is parsed as one comment."""
+        ast = parse("// comment /* the same comment */")
+        assert ast is not None
+
+    def test_inline_comment_with_nested_unclosed_block_comment(self, parse):
+        """Test an inline comment with a nested unclosed block comment is parsed as one comment."""
+        ast = parse("// comment /* the same comment")
+        assert ast is not None
+
+    def test_block_comment_with_unclosed_nested_block_comment(self, parse):
+        """Test that a block comment with a nested unclosed block comment parses."""
+        ast = parse("/* comment /* the same comment */")
+        assert ast is not None
+
+    def test_block_comment_with_nested_block_comment(self, parse):
+        """Test that an invalid nested block comment with two close tokens fails."""
+        ast = parse("/* comment /* the same comment */*/")
+        assert ast is None
+
+    def test_single_line_comment_with_include_comments(self):
+        """Test single-line comments are captured with include_comments=True."""
+        ast = getASTfromString("// This is a comment", include_comments=True)
+        assert ast is not None
+        comments = [n for n in ast if isinstance(n, CommentLine)]
+        assert len(comments) >= 1
+
+    def test_multi_line_comment_with_include_comments(self):
+        """Test multi-line comments are captured with include_comments=True."""
+        ast = getASTfromString("/* block comment */", include_comments=True)
+        assert ast is not None
+        comments = [n for n in ast if isinstance(n, CommentSpan)]
+        assert len(comments) >= 1
+
+    def test_comments_at_various_positions(self, parse):
+        """Test that comments at various positions in code parse correctly."""
+        # Comment before code
+        assert parse("// leading comment\nx = 1;") is not None
+        # Comment after code
+        assert parse("x = 1; // trailing comment") is not None
+        # Block comment between statements
+        assert parse("x = 1; /* between */ y = 2;") is not None
+        # Comment inside module body
+        assert parse("module test() { // inside\n  cube(1); }") is not None
+        # Comment between function arguments
+        assert parse("cube(/* size */ 10);") is not None
+        # Comment before closing brace
+        assert parse("module test() { cube(1); // end\n}") is not None
 
 
 class TestNumberLiterals:
@@ -160,6 +259,54 @@ class TestIdentifiers:
     def test_underscore_in_module_name(self, parse):
         ast = parse("module _internal() { cube(1); }")
         assert ast[0].name.name == "_internal"
+
+    def test_simple_identifier_as_target(self, parse):
+        """Test simple identifier as assignment target."""
+        ast = parse("x = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+
+    def test_identifier_with_underscore(self, parse):
+        """Test identifiers with underscores in the middle."""
+        ast = parse("my_var = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "my_var"
+
+    def test_identifier_with_numbers(self, parse):
+        """Test identifiers with numbers."""
+        ast = parse("var1 = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "var1"
+
+    def test_identifier_dollar_sign_as_target(self, parse):
+        """Test identifiers starting with dollar sign as assignment target."""
+        ast = parse("$var = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "$var"
+
+    def test_identifier_mixed_case(self, parse):
+        """Test mixed case identifiers."""
+        ast = parse("myVariable = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "myVariable"
+
+    def test_identifier_leading_underscore_as_target(self, parse):
+        """Test identifiers starting with underscore as assignment target."""
+        ast = parse("_private_var = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "_private_var"
+
+    def test_identifier_leading_underscore_uppercase(self, parse):
+        """Test uppercase identifiers starting with underscore."""
+        ast = parse("_UNDEF = 1;")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert ast[0].name.name == "_UNDEF"
 
     def test_identifier_str(self, parse):
         ast = parse("x = foo;")

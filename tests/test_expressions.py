@@ -25,6 +25,7 @@ from openscad_lalr_parser import (
     LessThanOrEqualOp,
     TernaryOp,
     NumberLiteral,
+    BooleanLiteral,
     Identifier,
     PrimaryCall,
     PrimaryIndex,
@@ -71,6 +72,18 @@ class TestArithmeticOps:
         ast = parse("x = 5 - 3;")
         assert str(ast[0].expr) == "5 - 3"
 
+    def test_chained_operations(self, parse):
+        ast = parse("x = 1 + 2 + 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, AdditionOp)
+        assert isinstance(expr.left, AdditionOp)
+
+    def test_mixed_operations(self, parse):
+        ast = parse("x = 1 + 2 * 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, AdditionOp)
+        assert isinstance(expr.right, MultiplicationOp)
+
 
 class TestPrecedence:
     def test_mul_before_add(self, parse):
@@ -96,6 +109,18 @@ class TestPrecedence:
         expr = ast[0].expr
         assert isinstance(expr, ExponentOp)
         assert isinstance(expr.right, ExponentOp)
+
+    def test_exponentiation_before_multiplication(self, parse):
+        ast = parse("x = 2 * 3 ^ 2;")
+        expr = ast[0].expr
+        assert isinstance(expr, MultiplicationOp)
+        assert isinstance(expr.right, ExponentOp)
+
+    def test_nested_parentheses(self, parse):
+        ast = parse("x = ((1 + 2) * 3) / 4;")
+        expr = ast[0].expr
+        assert isinstance(expr, DivisionOp)
+        assert isinstance(expr.left, MultiplicationOp)
 
     def test_unary_binds_tighter_than_mul(self, parse):
         ast = parse("x = -2 * 3;")
@@ -129,6 +154,22 @@ class TestComparisonOps:
         ast = parse("x = a <= b;")
         assert isinstance(ast[0].expr, LessThanOrEqualOp)
 
+    def test_less_equal(self, parse):
+        ast = parse("x = 1 <= 2;")
+        assert isinstance(ast[0].expr, LessThanOrEqualOp)
+
+    def test_greater_equal(self, parse):
+        ast = parse("x = 2 >= 1;")
+        assert isinstance(ast[0].expr, GreaterThanOrEqualOp)
+
+    def test_equal(self, parse):
+        ast = parse("x = 1 == 2;")
+        assert isinstance(ast[0].expr, EqualityOp)
+
+    def test_not_equal(self, parse):
+        ast = parse("x = 1 != 2;")
+        assert isinstance(ast[0].expr, InequalityOp)
+
 
 class TestLogicalOps:
     def test_logical_and(self, parse):
@@ -148,6 +189,12 @@ class TestLogicalOps:
         expr = ast[0].expr
         assert isinstance(expr, LogicalOrOp)
         assert isinstance(expr.right, LogicalAndOp)
+
+    def test_logical_precedence(self, parse):
+        ast = parse("x = true && false || true;")
+        expr = ast[0].expr
+        assert isinstance(expr, LogicalOrOp)
+        assert isinstance(expr.left, LogicalAndOp)
 
 
 class TestBitwiseOps:
@@ -171,6 +218,58 @@ class TestBitwiseOps:
         ast = parse("x = 8 >> 2;")
         assert isinstance(ast[0].expr, BitwiseShiftRightOp)
 
+    def test_binary_shift_left(self, parse):
+        ast = parse("x = 1 << 2;")
+        assert isinstance(ast[0].expr, BitwiseShiftLeftOp)
+
+    def test_binary_shift_left_chained(self, parse):
+        ast = parse("x = 1 << 2 << 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseShiftLeftOp)
+        assert isinstance(expr.left, BitwiseShiftLeftOp)
+
+    def test_binary_shift_right_chained(self, parse):
+        ast = parse("x = 64 >> 2 >> 1;")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseShiftRightOp)
+        assert isinstance(expr.left, BitwiseShiftRightOp)
+
+    def test_binary_shift_mixed(self, parse):
+        ast = parse("x = 1 << 2 >> 1;")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseShiftRightOp)
+        assert isinstance(expr.left, BitwiseShiftLeftOp)
+
+    def test_binary_shift_with_arithmetic(self, parse):
+        ast = parse("x = (1 << 2) + 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, AdditionOp)
+        assert isinstance(expr.left, BitwiseShiftLeftOp)
+
+    def test_binary_shift_in_expression(self, parse):
+        ast = parse("x = a << b >> c;")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseShiftRightOp)
+        assert isinstance(expr.left, BitwiseShiftLeftOp)
+
+    def test_binary_not_with_expression(self, parse):
+        ast = parse("x = ~(1 + 2);")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseNotOp)
+        assert isinstance(expr.expr, AdditionOp)
+
+    def test_binary_not_chained(self, parse):
+        ast = parse("x = ~~5;")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseNotOp)
+        assert isinstance(expr.expr, BitwiseNotOp)
+
+    def test_binary_not_with_shift(self, parse):
+        ast = parse("x = ~(1 << 2);")
+        expr = ast[0].expr
+        assert isinstance(expr, BitwiseNotOp)
+        assert isinstance(expr.expr, BitwiseShiftLeftOp)
+
 
 class TestTernaryOp:
     def test_ternary(self, parse):
@@ -183,6 +282,24 @@ class TestTernaryOp:
         expr = ast[0].expr
         assert "?" in str(expr)
         assert ":" in str(expr)
+
+    def test_ternary_simple(self, parse):
+        ast = parse("x = true ? 1 : 2;")
+        expr = ast[0].expr
+        assert isinstance(expr, TernaryOp)
+        assert isinstance(expr.condition, BooleanLiteral)
+
+    def test_ternary_nested(self, parse):
+        ast = parse("x = true ? (false ? 1 : 2) : 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, TernaryOp)
+        assert isinstance(expr.true_expr, TernaryOp)
+
+    def test_ternary_in_expression(self, parse):
+        ast = parse("x = (true ? 1 : 2) * 3;")
+        expr = ast[0].expr
+        assert isinstance(expr, MultiplicationOp)
+        assert isinstance(expr.left, TernaryOp)
 
 
 class TestPostfixOps:
@@ -230,6 +347,36 @@ class TestPostfixOps:
     def test_function_call_in_expression(self, parse):
         ast = parse("x = sin(0) + cos(0);")
         assert isinstance(ast[0].expr, AdditionOp)
+
+    def test_member_access_in_expression(self, parse):
+        ast = parse("x = obj.member + 1;")
+        expr = ast[0].expr
+        assert isinstance(expr, AdditionOp)
+        assert isinstance(expr.left, PrimaryMember)
+
+    def test_array_access_expression(self, parse):
+        ast = parse("x = arr[i + 1];")
+        expr = ast[0].expr
+        assert isinstance(expr, PrimaryIndex)
+        assert isinstance(expr.index, AdditionOp)
+
+    def test_function_call_with_member(self, parse):
+        ast = parse("x = obj.func(1, 2);")
+        expr = ast[0].expr
+        assert isinstance(expr, PrimaryCall)
+        assert isinstance(expr.left, PrimaryMember)
+
+
+class TestUnaryOps:
+    def test_unary_plus(self, parse):
+        ast = parse("x = +5;")
+        assert ast is not None
+        # Unary plus is a pass-through; the expression is the number itself
+        assert isinstance(ast[0].expr, NumberLiteral)
+
+    def test_unary_not(self, parse):
+        ast = parse("x = !true;")
+        assert isinstance(ast[0].expr, LogicalNotOp)
 
 
 class TestComplexExpressions:

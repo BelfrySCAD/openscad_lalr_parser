@@ -665,3 +665,50 @@ class TestErrorReporting:
 
             with pytest.raises(Exception):
                 getASTfromFile(main_file, process_includes=True)
+
+    def test_error_reporting_caret_position_edge_cases(self):
+        from openscad_lalr_parser import parse_ast
+        from openscad_lalr_parser.source_map import SourceMap
+
+        source_map = SourceMap()
+        source_map.add_origin("test.scad", "x = ;")
+
+        old_stdout = sys.stdout
+        try:
+            buffer = StringIO()
+            sys.stdout = buffer
+
+            combined_code = source_map.get_combined_string()
+            result = parse_ast(combined_code, origin="test.scad", source_map=source_map)
+            output = buffer.getvalue()
+
+            assert "Syntax error" in output
+            assert "^" in output
+        finally:
+            sys.stdout = old_stdout
+
+    def test_error_reporting_line_out_of_range(self):
+        from openscad_lalr_parser import parse_ast
+
+        old_stdout = sys.stdout
+        try:
+            buffer = StringIO()
+            sys.stdout = buffer
+
+            result = parse_ast("x = ;", origin="test.scad", source_map=None)
+            output = buffer.getvalue()
+            assert "Syntax error" in output
+        finally:
+            sys.stdout = old_stdout
+
+    def test_find_library_file_windows_path(self):
+        import platform
+        if platform.system() == "Windows":
+            result = findLibraryFile("", "nonexistent.scad")
+            assert result is None or isinstance(result, str)
+
+    def test_find_library_file_linux_path(self):
+        import platform
+        if platform.system() == "Linux":
+            result = findLibraryFile("", "nonexistent.scad")
+            assert result is None or isinstance(result, str)

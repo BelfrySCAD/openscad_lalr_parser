@@ -5,12 +5,16 @@ from openscad_lalr_parser import (
     ListComprehension,
     RangeLiteral,
     NumberLiteral,
+    StringLiteral,
+    BooleanLiteral,
+    Identifier,
     ListCompFor,
     ListCompCFor,
     ListCompIf,
     ListCompIfElse,
     ListCompLet,
     ListCompEach,
+    PrimaryIndex,
 )
 
 
@@ -40,6 +44,27 @@ class TestVectors:
         ast = parse("x = [1, 2, 3];")
         assert str(ast[0].expr) == "[1, 2, 3]"
 
+    def test_vector_single_element(self, parse):
+        """Test vector with single element."""
+        ast = parse("x = [1];")
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert len(ast[0].expr.elements) == 1
+
+    def test_vector_mixed_types(self, parse):
+        """Test vector with mixed types."""
+        ast = parse('x = [1, "hello", true];')
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert len(ast[0].expr.elements) == 3
+        assert isinstance(ast[0].expr.elements[0], NumberLiteral)
+        assert isinstance(ast[0].expr.elements[1], StringLiteral)
+        assert isinstance(ast[0].expr.elements[2], BooleanLiteral)
+
+    def test_vector_with_expressions(self, parse):
+        """Test vector with expressions."""
+        ast = parse("x = [1 + 2, 3 * 4, 5 / 6];")
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert len(ast[0].expr.elements) == 3
+
 
 class TestRanges:
     def test_two_part_range(self, parse):
@@ -60,6 +85,16 @@ class TestRanges:
         ast = parse("x = [0:2:10];")
         assert "0" in str(ast[0].expr)
         assert "10" in str(ast[0].expr)
+
+    def test_range_negative(self, parse):
+        """Test range with negative numbers."""
+        ast = parse("x = [-5:5];")
+        assert isinstance(ast[0].expr, RangeLiteral)
+
+    def test_range_expressions(self, parse):
+        """Test range with expressions."""
+        ast = parse("x = [0:2*5:10];")
+        assert isinstance(ast[0].expr, RangeLiteral)
 
 
 class TestListComprehensions:
@@ -166,6 +201,62 @@ class TestListComprehensions:
         assert isinstance(comp, ListComprehension)
         assert len(comp.elements) == 3
 
+    def test_listcomp_for_expression(self, parse):
+        """Test list comprehension with expression body."""
+        ast = parse("x = [for (i = [0:5]) i * 2];")
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert isinstance(ast[0].expr.elements[0], ListCompFor)
+
+    def test_listcomp_for_nested(self, parse):
+        """Test nested list comprehension."""
+        ast = parse("x = [for (i = [0:5]) [for (j = [0:3]) i + j]];")
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert isinstance(ast[0].expr.elements[0], ListCompFor)
+
+    def test_listcomp_if_nested(self, parse):
+        """Test nested if in list comprehension."""
+        ast = parse("x = [for (i = [0:5]) if (i > 0) if (i < 5) i];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_let_simple(self, parse):
+        """Test list comprehension with let inside for."""
+        ast = parse("x = [for (i = [0:5]) let(j = i * 2) j];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_let_multiple(self, parse):
+        """Test list comprehension with multiple let assignments."""
+        ast = parse("x = [for (i = [0:5]) let(j = i * 2, k = j + 1) k];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_let_nested(self, parse):
+        """Test nested let in list comprehension."""
+        ast = parse("x = [for (i = [0:5]) let(j = i * 2) let(k = j + 1) k];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_nested_complex(self, parse):
+        """Test complex nested list comprehension."""
+        ast = parse("x = [for (i = [0:5]) [for (j = [0:3]) if (i + j > 3) i + j]];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_parentheses(self, parse):
+        """Test list comprehension with parenthesised body expression."""
+        ast = parse("x = [for (i = [0:5]) (i * 2)];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_nested_parentheses(self, parse):
+        """Test list comprehension with nested parenthesised for."""
+        ast = parse("x = [for (i = [0:5]) (for (j = [0:3]) i + j)];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_listcomp_paren_expr_ast(self, parse):
+        """Parenthesised listcomp element builds correct AST."""
+        ast = parse("x = [(for (i = [0:3]) i)];")
+        assert isinstance(ast[0], Assignment)
+        comp = ast[0].expr
+        assert isinstance(comp, ListComprehension)
+        assert len(comp.elements) == 1
+        assert isinstance(comp.elements[0], ListCompFor)
+
 
 class TestListCompCFor:
     def test_one_init_one_incr(self, parse):
@@ -187,6 +278,66 @@ class TestListCompCFor:
         cfor = ast[0].expr.elements[0]
         assert isinstance(cfor, ListCompCFor)
         assert len(cfor.incrs) == 2
+        assert all(isinstance(a, Assignment) for a in cfor.incrs)
+
+    def test_both_zero(self, parse):
+        """Test C-for with zero inits and zero incrs."""
+        ast = parse("x = [for ( ; i < 5 ; ) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert cfor.inits == []
+        assert cfor.incrs == []
+
+    def test_zero_inits(self, parse):
+        """Test C-for with zero inits."""
+        ast = parse("x = [for ( ; i < 5 ; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert cfor.inits == []
+        assert isinstance(cfor.inits, list)
+
+    def test_one_init(self, parse):
+        """Test C-for with one init."""
+        ast = parse("x = [for (i = 0 ; i < 5 ; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.inits) == 1
+        assert isinstance(cfor.inits, list)
+        assert all(isinstance(a, Assignment) for a in cfor.inits)
+
+    def test_three_inits(self, parse):
+        """Test C-for with three inits."""
+        ast = parse("x = [for (i = 0, j = 1, k = 2 ; i < 5 ; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.inits) == 3
+        assert isinstance(cfor.inits, list)
+        assert all(isinstance(a, Assignment) for a in cfor.inits)
+
+    def test_zero_incrs(self, parse):
+        """Test C-for with zero incrs."""
+        ast = parse("x = [for (i = 0 ; i < 5 ; ) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert cfor.incrs == []
+        assert isinstance(cfor.incrs, list)
+
+    def test_one_incr(self, parse):
+        """Test C-for with one incr."""
+        ast = parse("x = [for (i = 0 ; i < 5 ; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.incrs) == 1
+        assert isinstance(cfor.incrs, list)
+        assert all(isinstance(a, Assignment) for a in cfor.incrs)
+
+    def test_three_incrs(self, parse):
+        """Test C-for with three incrs."""
+        ast = parse("x = [for (i = 0 ; i < 5 ; i = i + 1, j = i * 2, k = 3) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.incrs) == 3
+        assert isinstance(cfor.incrs, list)
         assert all(isinstance(a, Assignment) for a in cfor.incrs)
 
 
@@ -229,3 +380,30 @@ class TestListCompLetAssignments:
         lc = ast[0].expr.elements[0]
         assert isinstance(lc, ListCompLet)
         assert len(lc.assignments) == 3
+
+
+class TestVectorOperations:
+    """Test vector operations."""
+
+    def test_vector_assignment(self, parse):
+        """Test vector assignment."""
+        ast = parse("x = [1, 2, 3];")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_vector_in_function(self, parse):
+        """Test vector in function call."""
+        ast = parse("cube([10, 20, 30]);")
+        assert ast is not None
+
+    def test_vector_in_expression(self, parse):
+        """Test vector in expression."""
+        ast = parse("x = [1, 2, 3] + [4, 5, 6];")
+        assert ast is not None
+
+    def test_vector_access(self, parse):
+        """Test vector element access."""
+        ast = parse("x = vec[0];")
+        assert ast is not None
+        assert isinstance(ast[0], Assignment)

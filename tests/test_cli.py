@@ -95,6 +95,13 @@ class TestCLIFormatOutput:
         assert rc == 0
         assert "/* block */" in out
 
+    def test_format_preserves_comments_without_include_comments_flag(self):
+        src = "// line comment\nx = 1; /* inline */"
+        out, _, rc = _run("--format", "-", stdin=src)
+        assert rc == 0
+        assert "// line comment" in out
+        assert "/* inline */" in out
+
 
 class TestCLIOptions:
     def test_include_comments(self):

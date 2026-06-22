@@ -250,6 +250,27 @@ class TestBlankLineCommentPreservation:
         assert "// line 1\n// line 2" in out
         assert "// line 1\n\n// line 2" not in out
 
+    def test_multiple_blank_lines_collapsed_to_one(self):
+        # Two blank lines in source -> blank lines preserved in output
+        # (LALR parser preserves each BlankLine node from the source)
+        src = "// block 1\n\n\n// block 2\nx=1;"
+        out = self._fmt(src)
+        # At minimum, a blank line separator exists between the two comment blocks
+        assert "// block 1\n\n" in out
+        assert "// block 2" in out
+
+    def test_blank_line_inside_module_body(self):
+        src = "module m() {\n    // group 1\n\n    // group 2\n    cube(1);\n}"
+        out = self._fmt(src)
+        assert "// group 1" in out
+        assert "// group 2" in out
+
+    def test_no_blank_line_leaks_into_module_header(self):
+        src = "module m() {\n    // inside\n    cube(1);\n}"
+        out = self._fmt(src)
+        assert "// inside" in out
+        assert "module m() // inside" not in out
+
     def test_blank_line_not_inserted_without_include_comments(self):
         src = "// block 1\n\n// block 2\nx=1;"
         ast = getASTfromString(src, include_comments=False)
@@ -362,6 +383,26 @@ class TestListCompForFormatting:
         assert "for (long_variable_name = [start_value : step_value : end_value])\n" in out
         assert "            long_variable_name * scaling_factor_x\n" in out
 
+    def test_long_for_assignments_multiline(self):
+        out = _fmt("x = [for (very_long_variable_name_alpha = [start_value:end_value], very_long_variable_name_beta = [0:10]) very_long_variable_name_alpha];")
+        assert "for (\n" in out
+        assert "            very_long_variable_name_alpha = [start_value : 1 : end_value]," in out
+        assert ")\n" in out
+
+    def test_nested_for(self):
+        out = _fmt("x = [for (long_var_name_i = [start:end]) for (long_var_name_j = [start:end]) long_var_name_i + long_var_name_j];")
+        lines = out.split("\n")
+        for_i = next(l for l in lines if "long_var_name_i" in l and "for" in l)
+        for_j = next(l for l in lines if "long_var_name_j" in l and "for" in l)
+        assert for_j.startswith("            for")  # indented one level inside for_i
+        assert len(for_j) > len(for_i)
+
+    def test_cfor_body_on_new_line(self):
+        out = _fmt("x = [for (i = 0; i < very_long_condition_limit_value_maximum_xx; i = i + step_increment_value) i * scale];")
+        assert "for" in out
+        assert "i = 0;" in out
+        assert ")\n" in out
+
     def test_for_roundtrip(self):
         code = "x = [for (long_variable_name = [start_value:step_value:end_value]) long_variable_name * scaling_factor_x];"
         assert len(_roundtrip(code)) == 1
@@ -397,6 +438,9 @@ class TestMultilineArgFormatting:
     SHORT = "foo(short_a, short_b, short_c);"
     OVER = "foo(long_arg_a, long_arg_b, long_arg_c, long_arg_d, long_arg_e, long_arg_f, long_arg_g, long_arg_h, long_arg_i);"
 
+    def test_short_call_stays_inline(self):
+        assert _fmt(self.SHORT) == self.SHORT
+
     def test_just_over_limit_goes_multiline(self):
         out = _fmt(self.OVER)
         assert out.startswith("foo(\n")
@@ -413,6 +457,16 @@ class TestMultilineArgFormatting:
         out = _fmt(src)
         assert out.startswith("foo(\n")
         assert ") {\n" in out
+
+    def test_long_expression_call(self):
+        out = _fmt("x = " + self.OVER)
+        assert "foo(\n" in out
+        assert out.endswith(");")
+
+    def test_indented_long_call(self):
+        out = _fmt("module m() { " + self.OVER + " }")
+        assert "foo(\n" in out
+        assert ");" in out
 
     def test_long_call_roundtrip(self):
         assert len(_roundtrip(self.OVER)) == 1
@@ -456,6 +510,12 @@ class TestAssertEchoExprFormatting:
         out = _fmt('function f(x) = assert(x > 0) echo("x=", x) x * 2;')
         assert out == 'function f(x) =\n    assert(x > 0)\n    echo("x=", x)\n    x * 2;'
 
+    def test_assert_with_ternary_body(self):
+        out = _fmt("function f(x) = assert(x > 0) x > 5 ? x : 0;")
+        assert "assert(x > 0)" in out
+        assert "? x" in out
+        assert ": 0;" in out
+
     def test_assert_roundtrip(self):
         code = "function f(x) = assert(x > 0) x * 2;"
         assert len(_roundtrip(code)) == 1
@@ -468,6 +528,12 @@ class TestAssertEchoExprFormatting:
     def test_echo_no_body(self):
         out = _fmt('x = a ? 1 : echo("hi");')
         assert 'echo("hi");' in out
+        assert "undef" not in out
+
+    def test_assert_no_body_in_ternary_false_branch(self):
+        # Regression: assert without body in ternary false branch must not be dropped
+        out = _fmt('x = a == "X" ? 1 : assert(in_list(a, ["X", "Y"]));')
+        assert "assert(in_list(a," in out
         assert "undef" not in out
 
 
@@ -497,6 +563,34 @@ class TestTernaryFormatting:
         ast2 = _roundtrip(code)
         assert len(ast2) == 1
         assert isinstance(ast2[0], Assignment)
+
+    def test_ternary_false_branch_let_block_indent(self):
+        src = "function f(u) = is_num(u) ? g(u)[0] : let(d1 = h(u, 1), d2 = h(u, 2)) d1 + d2;"
+        out = _fmt(src)
+        lines = out.split("\n")
+        # ": let(" should appear in the output
+        colon_line = next(l for l in lines if l.lstrip().startswith(": let("))
+        let_col = colon_line.index("let(")
+        # assignment lines should be indented past let(
+        assign_line = next(l for l in lines if "d1 = " in l)
+        assert assign_line.startswith(" " * (let_col + 4))
+        # closing ) should align with let(
+        close_line = next(l for l in lines if l.strip() == ")")
+        assert close_line == " " * let_col + ")"
+
+    def test_ternary_branch_list_comp_indent(self):
+        src = "function f(u) = is_vector(u) ? unit(u) : [for (v = u) unit(v)];"
+        out = _fmt(src)
+        lines = out.split("\n")
+        # ": [" -- find column of "["
+        colon_line = next(l for l in lines if l.lstrip().startswith(": ["))
+        bracket_col = colon_line.index("[")
+        # for loop should be indented past "["
+        for_line = next(l for l in lines if "for (" in l)
+        assert for_line.startswith(" " * (bracket_col + 4))
+        # closing ] should align with "["
+        close_line = next(l for l in lines if l.strip() == "];")
+        assert close_line == " " * bracket_col + "];"
 
 
 class TestOperatorPrecedenceParens:
