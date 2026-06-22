@@ -29,13 +29,31 @@ class TestNumberLiterals:
         ast = parse("x = 1.5e-3;")
         assert ast[0].expr.val == 1.5e-3
 
+    def test_scientific_positive_exponent(self, parse):
+        ast = parse("x = 1e+10;")
+        assert ast[0].expr.val == 1e10
+
     def test_hex(self, parse):
         ast = parse("x = 0xFF;")
+        assert ast[0].expr.val == 255.0
+
+    def test_hex_lowercase(self, parse):
+        ast = parse("x = 0xff;")
         assert ast[0].expr.val == 255.0
 
     def test_leading_dot(self, parse):
         ast = parse("x = .5;")
         assert ast[0].expr.val == 0.5
+
+    def test_negative_integer(self, parse):
+        from openscad_lalr_parser import UnaryMinusOp
+        ast = parse("x = -42;")
+        assert isinstance(ast[0].expr, UnaryMinusOp)
+
+    def test_positive_integer(self, parse):
+        ast = parse("x = +42;")
+        assert isinstance(ast[0].expr, NumberLiteral)
+        assert ast[0].expr.val == 42.0
 
     def test_number_str(self, parse):
         ast = parse("x = 42;")
@@ -59,6 +77,20 @@ class TestStringLiterals:
     def test_escaped_quotes(self, parse):
         ast = parse(r'x = "say \"hi\"";')
         assert isinstance(ast[0].expr, StringLiteral)
+
+    def test_string_with_escapes(self, parse):
+        ast = parse('x = "hello\\nworld";')
+        assert isinstance(ast[0].expr, StringLiteral)
+
+    def test_string_with_leading_spaces(self, parse):
+        ast = parse('x = "  foo";')
+        assert isinstance(ast[0].expr, StringLiteral)
+        assert ast[0].expr.val == "  foo"
+
+    def test_string_with_only_spaces(self, parse):
+        ast = parse('x = "   ";')
+        assert isinstance(ast[0].expr, StringLiteral)
+        assert ast[0].expr.val == "   "
 
     def test_string_str(self, parse):
         ast = parse('x = "hello";')
@@ -113,6 +145,26 @@ class TestIdentifiers:
         ast = parse("x = myVar123;")
         assert ast[0].expr.name == "myVar123"
 
+    def test_double_underscore(self, parse):
+        ast = parse("x = __internal;")
+        assert ast[0].expr.name == "__internal"
+
+    def test_dollar_underscore(self, parse):
+        ast = parse("x = $_special;")
+        assert ast[0].expr.name == "$_special"
+
+    def test_underscore_in_function_name(self, parse):
+        ast = parse("function _helper(x) = x + 1;")
+        assert ast[0].name.name == "_helper"
+
+    def test_underscore_in_module_name(self, parse):
+        ast = parse("module _internal() { cube(1); }")
+        assert ast[0].name.name == "_internal"
+
     def test_identifier_str(self, parse):
         ast = parse("x = foo;")
         assert str(ast[0].expr) == "foo"
+
+    def test_identifier_repr(self, parse):
+        ast = parse("x = foo;")
+        assert repr(ast[0].expr) == "Identifier('foo')"

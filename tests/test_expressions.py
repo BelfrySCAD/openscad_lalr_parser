@@ -211,3 +211,56 @@ class TestPostfixOps:
         ast = parse("x = arr[0][1];")
         assert isinstance(ast[0].expr, PrimaryIndex)
         assert isinstance(ast[0].expr.left, PrimaryIndex)
+
+    def test_member_chained(self, parse):
+        ast = parse("x = obj.member.submember;")
+        assert isinstance(ast[0].expr, PrimaryMember)
+        assert isinstance(ast[0].expr.left, PrimaryMember)
+
+    def test_function_call_no_args(self, parse):
+        ast = parse("x = foo();")
+        assert isinstance(ast[0].expr, PrimaryCall)
+        assert len(ast[0].expr.arguments) == 0
+
+    def test_nested_function_calls(self, parse):
+        ast = parse("x = sin(cos(0));")
+        assert isinstance(ast[0].expr, PrimaryCall)
+        assert isinstance(ast[0].expr.arguments[0].expr, PrimaryCall)
+
+    def test_function_call_in_expression(self, parse):
+        ast = parse("x = sin(0) + cos(0);")
+        assert isinstance(ast[0].expr, AdditionOp)
+
+
+class TestComplexExpressions:
+    def test_complex_1(self, parse):
+        ast = parse("x = (a + b) * (c - d) / (e % f);")
+        assert isinstance(ast[0].expr, DivisionOp)
+
+    def test_complex_2(self, parse):
+        ast = parse("x = a > b && c < d || e == f;")
+        assert isinstance(ast[0].expr, LogicalOrOp)
+
+    def test_complex_3(self, parse):
+        ast = parse("x = sin(a) * cos(b) + tan(c);")
+        assert isinstance(ast[0].expr, AdditionOp)
+
+    def test_complex_4(self, parse):
+        ast = parse("x = arr[i] + arr[j] * arr[k];")
+        assert isinstance(ast[0].expr, AdditionOp)
+
+    def test_complex_5(self, parse):
+        ast = parse("x = a > b ? c + d : e - f;")
+        assert isinstance(ast[0].expr, TernaryOp)
+
+    def test_multiple_unary(self, parse):
+        from openscad_lalr_parser import UnaryMinusOp
+        ast = parse("x = --5;")
+        assert isinstance(ast[0].expr, UnaryMinusOp)
+        assert isinstance(ast[0].expr.expr, UnaryMinusOp)
+
+    def test_unary_with_expression(self, parse):
+        from openscad_lalr_parser import UnaryMinusOp
+        ast = parse("x = -(1 + 2);")
+        assert isinstance(ast[0].expr, UnaryMinusOp)
+        assert isinstance(ast[0].expr.expr, AdditionOp)

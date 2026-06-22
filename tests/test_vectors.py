@@ -111,3 +111,121 @@ class TestListComprehensions:
         for_elem = lc.elements[0]
         assert isinstance(for_elem, ListCompFor)
         assert len(for_elem.assignments) == 2
+
+    def test_each_ast_detail(self, parse):
+        ast = parse("x = [each [1, 2, 3]];")
+        outer = ast[0].expr
+        assert isinstance(outer, ListComprehension)
+        assert len(outer.elements) == 1
+        each = outer.elements[0]
+        assert isinstance(each, ListCompEach)
+        inner = each.body
+        assert isinstance(inner, ListComprehension)
+        assert len(inner.elements) == 3
+        assert all(isinstance(e, NumberLiteral) for e in inner.elements)
+
+    def test_each_str(self, parse):
+        ast = parse("x = [each [1, 2, 3]];")
+        assert str(ast[0].expr) == "[each [1, 2, 3]]"
+
+    def test_each_in_for(self, parse):
+        ast = parse("x = [for (i = [0:2]) each [i, i+1]];")
+        lc = ast[0].expr
+        assert isinstance(lc.elements[0], ListCompFor)
+
+    def test_nested_each(self, parse):
+        ast = parse("x = [each [each [1, 2, 3]]];")
+        outer = ast[0].expr
+        each = outer.elements[0]
+        assert isinstance(each, ListCompEach)
+
+    def test_for_if_comprehension(self, parse):
+        ast = parse("x = [for (i = [0:10]) if (i % 2 == 0) i * 2];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_for_let_if_comprehension(self, parse):
+        ast = parse("x = [for (i = [0:10]) let(j = i * 2) if (j > 5) j];")
+        assert isinstance(ast[0].expr, ListComprehension)
+
+    def test_paren_listcomp(self, parse):
+        ast = parse("x = [(for (i = [0:3]) i)];")
+        assert isinstance(ast[0].expr, ListComprehension)
+        assert len(ast[0].expr.elements) == 1
+        assert isinstance(ast[0].expr.elements[0], ListCompFor)
+
+    def test_two_for_elements(self, parse):
+        ast = parse("x = [for (i = [0:3]) i, for (j = [0:2]) j];")
+        comp = ast[0].expr
+        assert isinstance(comp, ListComprehension)
+        assert len(comp.elements) == 2
+        assert all(isinstance(e, ListCompFor) for e in comp.elements)
+
+    def test_mixed_elements(self, parse):
+        ast = parse("x = [1, for (i = [0:2]) i, 3];")
+        comp = ast[0].expr
+        assert isinstance(comp, ListComprehension)
+        assert len(comp.elements) == 3
+
+
+class TestListCompCFor:
+    def test_one_init_one_incr(self, parse):
+        ast = parse("x = [for (i = 0; i < 5; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.inits) == 1
+        assert len(cfor.incrs) == 1
+
+    def test_two_inits(self, parse):
+        ast = parse("x = [for (i = 0, j = 1; i < 5; i = i + 1) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.inits) == 2
+        assert all(isinstance(a, Assignment) for a in cfor.inits)
+
+    def test_two_incrs(self, parse):
+        ast = parse("x = [for (i = 0; i < 5; i = i + 1, j = i * 2) i];")
+        cfor = ast[0].expr.elements[0]
+        assert isinstance(cfor, ListCompCFor)
+        assert len(cfor.incrs) == 2
+        assert all(isinstance(a, Assignment) for a in cfor.incrs)
+
+
+class TestListCompForAssignments:
+    def test_one_assignment(self, parse):
+        ast = parse("x = [for (i = [0:5]) i];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompFor)
+        assert len(lc.assignments) == 1
+        assert all(isinstance(a, Assignment) for a in lc.assignments)
+
+    def test_two_assignments(self, parse):
+        ast = parse("x = [for (i = [0:5], j = [0:3]) i + j];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompFor)
+        assert len(lc.assignments) == 2
+
+    def test_three_assignments(self, parse):
+        ast = parse("x = [for (i = [0:5], j = [0:3], k = [0:2]) i + j + k];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompFor)
+        assert len(lc.assignments) == 3
+
+
+class TestListCompLetAssignments:
+    def test_one_assignment(self, parse):
+        ast = parse("x = [let(a = 1) for (i = [0:3]) a + i];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompLet)
+        assert len(lc.assignments) == 1
+
+    def test_two_assignments(self, parse):
+        ast = parse("x = [let(a = 1, b = 2) for (i = [0:3]) a + b + i];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompLet)
+        assert len(lc.assignments) == 2
+
+    def test_three_assignments(self, parse):
+        ast = parse("x = [let(a = 1, b = 2, c = 3) for (i = [0:3]) a + b + c + i];")
+        lc = ast[0].expr.elements[0]
+        assert isinstance(lc, ListCompLet)
+        assert len(lc.assignments) == 3

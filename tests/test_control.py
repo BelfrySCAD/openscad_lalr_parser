@@ -115,3 +115,63 @@ class TestAssertExpr:
         ast = parse("x = assert(y > 0);")
         assert isinstance(ast[0].expr, AssertOp)
         assert isinstance(ast[0].expr.body, UndefinedLiteral)
+
+
+class TestModularEchoArgCounts:
+    def test_echo_zero_args(self, parse):
+        ast = parse("echo();")
+        assert isinstance(ast[0], ModularEcho)
+        assert len(ast[0].arguments) == 0
+
+    def test_echo_two_args(self, parse):
+        ast = parse("echo(1, 2);")
+        assert isinstance(ast[0], ModularEcho)
+        assert len(ast[0].arguments) == 2
+
+    def test_echo_three_args(self, parse):
+        ast = parse("echo(1, 2, 3);")
+        assert isinstance(ast[0], ModularEcho)
+        assert len(ast[0].arguments) == 3
+
+
+class TestModularAssertArgCounts:
+    def test_assert_two_args(self, parse):
+        ast = parse('assert(true, "msg");')
+        assert isinstance(ast[0], ModularAssert)
+        assert len(ast[0].arguments) == 2
+
+
+class TestModularLetAssignmentCounts:
+    def test_let_zero_assignments(self, parse):
+        ast = parse("let() cube(1);")
+        assert isinstance(ast[0], ModularLet)
+        assert len(ast[0].assignments) == 0
+
+    def test_let_two_assignments(self, parse):
+        ast = parse("let(x=1, y=2) cube(x);")
+        assert isinstance(ast[0], ModularLet)
+        assert len(ast[0].assignments) == 2
+
+    def test_let_three_assignments(self, parse):
+        ast = parse("let(x=1, y=2, z=3) cube(x);")
+        assert isinstance(ast[0], ModularLet)
+        assert len(ast[0].assignments) == 3
+
+
+class TestModularForAssignmentCounts:
+    def test_for_two_assignments(self, parse):
+        ast = parse("for (i=[0:3], j=[0:2]) cube(i);")
+        assert isinstance(ast[0], ModularFor)
+        assert len(ast[0].assignments) == 2
+
+    def test_for_three_assignments(self, parse):
+        ast = parse("for (i=[0:3], j=[0:2], k=[0:1]) cube(i);")
+        assert isinstance(ast[0], ModularFor)
+        assert len(ast[0].assignments) == 3
+
+
+class TestModularIntersectionForCounts:
+    def test_intersection_for_two(self, parse):
+        ast = parse("intersection_for (i=[0:3], j=[0:2]) cube(i);")
+        assert isinstance(ast[0], ModularIntersectionFor)
+        assert len(ast[0].assignments) == 2

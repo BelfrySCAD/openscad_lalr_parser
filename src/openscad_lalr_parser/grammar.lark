@@ -39,7 +39,7 @@ assignment: NAME "=" expr ";"
 
 assignment_expr: NAME "=" expr
 
-assignments_expr: assignment_expr ("," assignment_expr)* ","?
+assignments_expr: (assignment_expr ("," assignment_expr)* ","?)?
 
 // --- Parameters ---
 
