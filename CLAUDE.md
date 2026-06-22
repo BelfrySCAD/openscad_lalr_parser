@@ -28,7 +28,11 @@ OpenSCADTransformer (transformer.py)
     ↓
 AST Nodes (nodes.py)
     ↓ (optional)
+Comment Attachment (__init__.py — inline → CommentedExpr, standalone → top-level)
+    ↓ (optional)
 Scope Analysis (scope.py)
+    ↓ (optional)
+Serialization (serialization.py — JSON/YAML/dict) or Pretty-Print (pretty_print.py)
 ```
 
 ### Key Files
@@ -37,7 +41,11 @@ Scope Analysis (scope.py)
 - `src/openscad_lalr_parser/transformer.py` — Lark Transformer converting parse trees to AST nodes
 - `src/openscad_lalr_parser/nodes.py` — All AST node dataclasses with `build_scope()` methods
 - `src/openscad_lalr_parser/scope.py` — Scope class and `build_scopes()` function
-- `src/openscad_lalr_parser/__init__.py` — Public API: `getASTfromString()`, `getASTfromFile()`, etc.
+- `src/openscad_lalr_parser/__init__.py` — Public API, comment attachment, caching (memory + disk)
+- `src/openscad_lalr_parser/pretty_print.py` — `to_openscad()` AST-to-source formatter
+- `src/openscad_lalr_parser/serialization.py` — JSON/YAML/dict serialize and deserialize
+- `src/openscad_lalr_parser/source_map.py` — Source map for tracking origins across includes
+- `src/openscad_lalr_parser/cli.py` — `openscad-lalr` CLI entry point
 
 ### Design Patterns
 
@@ -45,6 +53,7 @@ Scope Analysis (scope.py)
 - **Dataclass AST nodes**: All nodes are Python `@dataclass` with `position: Position` and optional `scope: Scope`
 - **Transparent rules**: Expression precedence uses Lark's `?rule` syntax for transparent intermediate rules
 - **Singleton parser**: The Lark parser is created once and cached in `_parser_cache`
+- **Two-phase comment attachment**: Comments extracted separately (Lark `%ignore`), then classified as inline vs standalone and attached to AST nodes via `CommentedExpr` wrapping or top-level injection
 
 ### AST Node Hierarchy
 
@@ -77,3 +86,8 @@ ASTNode
 - `test_control.py` — if/else, for, let, echo, assert
 - `test_use_include.py` — use/include statements
 - `test_assignments.py` — Variable assignments, scope analysis
+- `test_pretty_print.py` — Pretty-printer output, inline comments
+- `test_ast_convenience.py` — Serialization, deserialization, AST utilities
+- `test_source_map.py` — Source map tracking
+- `test_complex.py` — Real-world OpenSCAD scenarios, edge cases
+- `test_cli.py` — CLI argument handling, output formats
