@@ -1,0 +1,59 @@
+[build-system]
+requires = ["uv_build>=0.8.22,<=0.9.20"]
+build-backend = "uv_build"
+
+[project]
+name = "openscad_lalr_parser"
+version = "0.1.0"
+description = "A fast LALR(1) parser for the OpenSCAD language with AST generation, powered by Lark."
+readme = "README.md"
+authors = [
+  { name="Revar Desmera", email="revarbat@gmail.com" },
+]
+maintainers = [
+  { name="Revar Desmera", email="revarbat@gmail.com" },
+]
+license = "MIT"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Artistic Software",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["openscad", "openscad parser", "parser", "lalr"]
+dependencies = [
+    "lark>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=7.1.0",
+    "genbadge[coverage]>=1.1.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/BelfrySCAD/openscad_lalr_parser"
+"Repository" = "https://github.com/BelfrySCAD/openscad_lalr_parser"
+"Bug Tracker" = "https://github.com/BelfrySCAD/openscad_lalr_parser/issues"
+"Releases" = "https://github.com/BelfrySCAD/openscad_lalr_parser/releases"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"

@@ -1,0 +1,222 @@
+// OpenSCAD LALR(1) Grammar for Lark
+// Translated from openscad_parser's Arpeggio PEG grammar.
+
+start: toplevel_statement*
+
+toplevel_statement: use_statement
+    | include_statement
+    | statement
+
+// --- Statements ---
+
+statement: empty_statement
+    | statement_block
+    | module_definition
+    | function_definition
+    | module_instantiation
+    | assignment
+
+empty_statement: ";"
+
+statement_block: "{" statement* "}"
+
+// --- Use / Include ---
+
+use_statement: "use" USE_INCLUDE_FILE
+include_statement: "include" USE_INCLUDE_FILE
+
+USE_INCLUDE_FILE: /<[^>]+>/
+
+// --- Module and Function Definitions ---
+
+module_definition: "module" NAME parameter_block statement
+
+function_definition: "function" NAME parameter_block "=" expr ";"
+
+// --- Assignments ---
+
+assignment: NAME "=" expr ";"
+
+assignment_expr: NAME "=" expr
+
+assignments_expr: assignment_expr ("," assignment_expr)* ","?
+
+// --- Parameters ---
+
+parameter_block: "(" parameters ")"
+
+parameters: (parameter ("," parameter)* ","?)?
+
+parameter: parameter_with_default | parameter_without_default
+
+parameter_with_default: NAME "=" expr
+
+parameter_without_default: NAME
+
+// --- Arguments ---
+
+argument_block: "(" arguments ")"
+
+arguments: (argument ("," argument)* ","?)?
+
+argument: named_argument | positional_argument
+
+positional_argument: expr
+
+named_argument: NAME "=" expr
+
+// --- Module Instantiation ---
+
+module_instantiation: modifier_show_only
+    | modifier_highlight
+    | modifier_background
+    | modifier_disable
+    | ifelse_statement
+    | if_statement
+    | single_module_instantiation
+
+modifier_show_only: "!" module_instantiation
+modifier_highlight: "#" module_instantiation
+modifier_background: "%" module_instantiation
+modifier_disable: "*" module_instantiation
+
+if_statement: "if" "(" expr ")" child_statement
+ifelse_statement: "if" "(" expr ")" child_statement "else" child_statement
+
+single_module_instantiation: modular_for
+    | modular_intersection_for
+    | modular_let
+    | modular_assert
+    | modular_echo
+    | modular_call
+
+child_statement: empty_statement
+    | statement_block
+    | module_instantiation
+
+// --- Modular Control Structures ---
+
+modular_for: "for" "(" assignments_expr ")" child_statement
+modular_intersection_for: "intersection_for" "(" assignments_expr ")" child_statement
+modular_let: "let" "(" assignments_expr ")" child_statement
+modular_assert: "assert" "(" arguments ")" child_statement
+modular_echo: "echo" "(" arguments ")" child_statement
+modular_call: NAME "(" arguments ")" child_statement
+
+// --- Expressions ---
+// Precedence is encoded via explicit rule nesting (like the PEG grammar).
+
+?expr: let_expr
+    | assert_expr
+    | echo_expr
+    | funclit_def
+    | ternary_expr
+    | logical_or
+
+let_expr: "let" "(" assignments_expr ")" expr
+assert_expr: "assert" "(" arguments ")" expr?
+echo_expr: "echo" "(" arguments ")" expr?
+funclit_def: "function" "(" parameters ")" expr
+
+ternary_expr: logical_or "?" expr ":" expr
+
+?logical_or: logical_and
+    | logical_or "||" logical_and -> logical_or_op
+
+?logical_and: equality
+    | logical_and "&&" equality -> logical_and_op
+
+?equality: comparison
+    | equality "==" comparison -> equality_op
+    | equality "!=" comparison -> inequality_op
+
+?comparison: bitwise_or
+    | comparison "<" bitwise_or  -> less_than_op
+    | comparison ">" bitwise_or  -> greater_than_op
+    | comparison "<=" bitwise_or -> less_than_or_equal_op
+    | comparison ">=" bitwise_or -> greater_than_or_equal_op
+
+?bitwise_or: bitwise_and
+    | bitwise_or "|" bitwise_and -> bitwise_or_op
+
+?bitwise_and: bitwise_shift
+    | bitwise_and "&" bitwise_shift -> bitwise_and_op
+
+?bitwise_shift: addition
+    | bitwise_shift "<<" addition -> bitwise_shift_left_op
+    | bitwise_shift ">>" addition -> bitwise_shift_right_op
+
+?addition: multiplication
+    | addition "+" multiplication -> addition_op
+    | addition "-" multiplication -> subtraction_op
+
+?multiplication: unary
+    | multiplication "*" unary -> multiplication_op
+    | multiplication "/" unary -> division_op
+    | multiplication "%" unary -> modulo_op
+
+?unary: exponent
+    | "-" unary   -> unary_minus_op
+    | "!" unary   -> logical_not_op
+    | "~" unary   -> bitwise_not_op
+    | "+" unary   -> unary_plus_op
+
+?exponent: postfix
+    | postfix "^" unary -> exponent_op
+
+?postfix: primary
+    | postfix "(" arguments ")"     -> call_expr
+    | postfix "[" expr "]"          -> index_expr
+    | postfix "." NAME              -> member_expr
+
+?primary: "(" expr ")"             -> paren_expr
+    | range_expr
+    | vector_expr
+    | "undef"                       -> undef_literal
+    | "true"                        -> true_literal
+    | "false"                       -> false_literal
+    | STRING
+    | NUMBER
+    | NAME
+
+// --- Range and Vector ---
+
+range_expr: "[" expr ":" expr (":" expr)? "]"
+
+vector_expr: "[" vector_elements "]"
+    | "[" "]"
+
+vector_elements: vector_element ("," vector_element)* ","?
+
+?vector_element: listcomp_elements | expr
+
+?listcomp_elements: listcomp_paren_expr
+    | listcomp_let
+    | listcomp_each
+    | listcomp_c_for
+    | listcomp_for
+    | listcomp_ifelse
+    | listcomp_ifonly
+
+listcomp_paren_expr: "(" listcomp_elements ")"
+listcomp_let: "let" "(" assignments_expr ")" listcomp_elements
+listcomp_each: "each" vector_element
+listcomp_for: "for" "(" assignments_expr ")" vector_element
+listcomp_c_for: "for" "(" assignments_expr ";" expr ";" assignments_expr ")" vector_element
+listcomp_ifonly: "if" "(" expr ")" vector_element
+listcomp_ifelse: "if" "(" expr ")" vector_element "else" vector_element
+
+// --- Terminals ---
+
+NAME: /\$?[_A-Za-z][A-Za-z0-9_]*/
+NUMBER: /0x[0-9A-Fa-f]+|\d+([.]\d*)?([eE][+-]?\d+)?|[.]\d+([eE][+-]?\d+)?/
+STRING: /\"(?:[^\"\\]|\\.)*\"/
+
+// --- Comments and Whitespace ---
+
+COMMENT_LINE: /\/\/[^\n]*/
+COMMENT_MULTI: /\/\*[\s\S]*?\*\//
+
+%ignore /[\s]+/
+%ignore COMMENT_LINE
+%ignore COMMENT_MULTI
