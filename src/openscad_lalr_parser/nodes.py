@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from .scope import Scope
 
 
-@dataclass
+@dataclass(slots=True)
 class Position:
     """Represents a location in a source origin.
 
@@ -29,7 +29,7 @@ class Position:
 
 # --- AST nodes classes. ---
 
-@dataclass
+@dataclass(slots=True)
 class ASTNode(object):
     """Base class for all AST nodes.
 
@@ -54,7 +54,7 @@ class ASTNode(object):
         self.scope = parent_scope
 
 
-@dataclass
+@dataclass(slots=True)
 class CommentLine(ASTNode):
     """Represents a single-line OpenSCAD comment.
 
@@ -69,7 +69,7 @@ class CommentLine(ASTNode):
         return f"//{self.text}"
 
 
-@dataclass
+@dataclass(slots=True)
 class BlankLine(ASTNode):
     """A preserved blank line between consecutive single-line comment blocks."""
 
@@ -80,7 +80,7 @@ class BlankLine(ASTNode):
         self.scope = parent_scope
 
 
-@dataclass
+@dataclass(slots=True)
 class CommentSpan(ASTNode):
     """Represents a multi-line OpenSCAD comment span.
 
@@ -95,7 +95,7 @@ class CommentSpan(ASTNode):
         return f"/*{self.text}*/"
 
 
-@dataclass
+@dataclass(slots=True)
 class Expression(ASTNode):
     """Base class for all OpenSCAD expressions.
 
@@ -111,7 +111,7 @@ class Expression(ASTNode):
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class CommentedExpr(Expression):
     """An expression preceded and/or followed by inline block comments.
 
@@ -142,7 +142,7 @@ class CommentedExpr(Expression):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class Primary(Expression):
     """Base class for all OpenSCAD primary (atomic) value types.
 
@@ -152,7 +152,7 @@ class Primary(Expression):
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class Identifier(Primary):
     """Represents an OpenSCAD identifier (variable or function name).
 
@@ -168,7 +168,7 @@ class Identifier(Primary):
         return f"Identifier('{self.name}')"
 
 
-@dataclass
+@dataclass(slots=True)
 class StringLiteral(Primary):
     """Represents an OpenSCAD string literal.
 
@@ -181,7 +181,7 @@ class StringLiteral(Primary):
         return f'"{self.val}"'
 
 
-@dataclass
+@dataclass(slots=True)
 class NumberLiteral(Primary):
     """Represents an OpenSCAD numeric literal.
 
@@ -197,7 +197,7 @@ class NumberLiteral(Primary):
         return s
 
 
-@dataclass
+@dataclass(slots=True)
 class BooleanLiteral(Primary):
     """Represents an OpenSCAD boolean literal.
 
@@ -210,7 +210,7 @@ class BooleanLiteral(Primary):
         return "true" if self.val else "false"
 
 
-@dataclass
+@dataclass(slots=True)
 class UndefinedLiteral(Primary):
     """Represents an OpenSCAD undefined literal (undef)."""
 
@@ -218,7 +218,7 @@ class UndefinedLiteral(Primary):
         return "undef"
 
 
-@dataclass
+@dataclass(slots=True)
 class ParameterDeclaration(ASTNode):
     """Represents a parameter declaration in a function or module definition.
 
@@ -249,13 +249,13 @@ class ParameterDeclaration(ASTNode):
             self.default.build_scope(caller_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class Argument(ASTNode):
     """Base class for function and module call arguments."""
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class PositionalArgument(Argument):
     """Represents a positional argument in a function or module call.
 
@@ -272,7 +272,7 @@ class PositionalArgument(Argument):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class NamedArgument(Argument):
     """Represents a named argument in a function or module call.
 
@@ -292,7 +292,7 @@ class NamedArgument(Argument):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class RangeLiteral(Primary):
     """Represents an OpenSCAD range literal.
 
@@ -315,7 +315,7 @@ class RangeLiteral(Primary):
         self.step.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class Assignment(ASTNode):
     """Represents a variable assignment in OpenSCAD.
 
@@ -335,7 +335,7 @@ class Assignment(ASTNode):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LetOp(Expression):
     """Represents an OpenSCAD let expression.
 
@@ -358,7 +358,7 @@ class LetOp(Expression):
         self.body.build_scope(let_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class EchoOp(Expression):
     """Represents an OpenSCAD echo expression.
 
@@ -382,7 +382,7 @@ class EchoOp(Expression):
         self.body.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class AssertOp(Expression):
     """Represents an OpenSCAD assert expression.
 
@@ -406,7 +406,7 @@ class AssertOp(Expression):
         self.body.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class UnaryMinusOp(Expression):
     """Represents an OpenSCAD unary minus (negation) operation.
 
@@ -423,7 +423,7 @@ class UnaryMinusOp(Expression):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class AdditionOp(Expression):
     """Represents an OpenSCAD addition operation.
 
@@ -444,7 +444,7 @@ class AdditionOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class SubtractionOp(Expression):
     """Represents an OpenSCAD subtraction operation.
 
@@ -465,7 +465,7 @@ class SubtractionOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class MultiplicationOp(Expression):
     """Represents an OpenSCAD multiplication operation.
 
@@ -486,7 +486,7 @@ class MultiplicationOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class DivisionOp(Expression):
     """Represents an OpenSCAD division operation.
 
@@ -507,7 +507,7 @@ class DivisionOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModuloOp(Expression):
     """Represents an OpenSCAD modulo (remainder) operation.
 
@@ -528,7 +528,7 @@ class ModuloOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ExponentOp(Expression):
     """Represents an OpenSCAD exponentiation operation.
 
@@ -549,7 +549,7 @@ class ExponentOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class BitwiseAndOp(Expression):
     """Represents an OpenSCAD bitwise AND operation.
 
@@ -570,7 +570,7 @@ class BitwiseAndOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class BitwiseOrOp(Expression):
     """Represents an OpenSCAD bitwise OR operation.
 
@@ -591,7 +591,7 @@ class BitwiseOrOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class BitwiseNotOp(Expression):
     """Represents an OpenSCAD bitwise NOT (complement) operation.
 
@@ -608,7 +608,7 @@ class BitwiseNotOp(Expression):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class BitwiseShiftLeftOp(Expression):
     """Represents an OpenSCAD bitwise left shift operation.
 
@@ -629,7 +629,7 @@ class BitwiseShiftLeftOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class BitwiseShiftRightOp(Expression):
     """Represents an OpenSCAD bitwise right shift operation.
 
@@ -650,7 +650,7 @@ class BitwiseShiftRightOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LogicalAndOp(Expression):
     """Represents an OpenSCAD logical AND operation.
 
@@ -671,7 +671,7 @@ class LogicalAndOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LogicalOrOp(Expression):
     """Represents an OpenSCAD logical OR operation.
 
@@ -692,7 +692,7 @@ class LogicalOrOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LogicalNotOp(Expression):
     """Represents an OpenSCAD logical NOT operation.
 
@@ -709,7 +709,7 @@ class LogicalNotOp(Expression):
         self.expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class TernaryOp(Expression):
     """Represents an OpenSCAD ternary (conditional) expression.
 
@@ -732,7 +732,7 @@ class TernaryOp(Expression):
         self.false_expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class EqualityOp(Expression):
     """Represents an OpenSCAD equality comparison operation.
 
@@ -753,7 +753,7 @@ class EqualityOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class InequalityOp(Expression):
     """Represents an OpenSCAD inequality comparison operation.
 
@@ -774,7 +774,7 @@ class InequalityOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class GreaterThanOp(Expression):
     """Represents an OpenSCAD greater-than comparison operation.
 
@@ -795,7 +795,7 @@ class GreaterThanOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class GreaterThanOrEqualOp(Expression):
     """Represents an OpenSCAD greater-than-or-equal comparison operation.
 
@@ -816,7 +816,7 @@ class GreaterThanOrEqualOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LessThanOp(Expression):
     """Represents an OpenSCAD less-than comparison operation.
 
@@ -837,7 +837,7 @@ class LessThanOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class LessThanOrEqualOp(Expression):
     """Represents an OpenSCAD less-than-or-equal comparison operation.
 
@@ -858,7 +858,7 @@ class LessThanOrEqualOp(Expression):
         self.right.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class FunctionLiteral(Expression):
     """Represents an OpenSCAD function literal (anonymous function).
 
@@ -881,7 +881,7 @@ class FunctionLiteral(Expression):
         self.body.build_scope(func_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class PrimaryCall(Expression):
     """Represents an OpenSCAD function call expression.
 
@@ -902,7 +902,7 @@ class PrimaryCall(Expression):
             arg.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class PrimaryIndex(Expression):
     """Represents an OpenSCAD array/vector index access expression.
 
@@ -922,7 +922,7 @@ class PrimaryIndex(Expression):
         self.index.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class PrimaryMember(Expression):
     """Represents an OpenSCAD member access expression.
 
@@ -942,14 +942,14 @@ class PrimaryMember(Expression):
         self.member.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class VectorElement(ASTNode):
     """Base class for elements in OpenSCAD list comprehensions."""
     def __str__(self):
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompLet(VectorElement):
     """Represents a let expression within a list comprehension.
 
@@ -972,7 +972,7 @@ class ListCompLet(VectorElement):
         self.body.build_scope(let_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompEach(VectorElement):
     """Represents an 'each' expression within a list comprehension.
 
@@ -989,7 +989,7 @@ class ListCompEach(VectorElement):
         self.body.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompFor(VectorElement):
     """Represents a for loop within a list comprehension.
 
@@ -1014,7 +1014,7 @@ class ListCompFor(VectorElement):
         self.body.build_scope(for_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompCFor(VectorElement):
     """Represents a C-style for loop within a list comprehension.
 
@@ -1044,7 +1044,7 @@ class ListCompCFor(VectorElement):
         self.body.build_scope(for_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompIf(VectorElement):
     """Represents an if condition within a list comprehension.
 
@@ -1064,7 +1064,7 @@ class ListCompIf(VectorElement):
         self.true_expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListCompIfElse(VectorElement):
     """Represents an if-else condition within a list comprehension.
 
@@ -1087,7 +1087,7 @@ class ListCompIfElse(VectorElement):
         self.false_expr.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ListComprehension(Expression):
     """Represents an OpenSCAD list comprehension (vector literal).
 
@@ -1105,13 +1105,13 @@ class ListComprehension(Expression):
             elem.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModuleInstantiation(ASTNode):
     """Base class for all OpenSCAD module instantiations."""
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularCall(ModuleInstantiation):
     """Represents a module call (module instantiation).
 
@@ -1139,7 +1139,7 @@ class ModularCall(ModuleInstantiation):
                 child.build_scope(children_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularFor(ModuleInstantiation):
     """Represents a for loop module instantiation.
 
@@ -1167,7 +1167,7 @@ class ModularFor(ModuleInstantiation):
             node.build_scope(for_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularIntersectionFor(ModuleInstantiation):
     """Represents an intersection_for loop module instantiation.
 
@@ -1195,7 +1195,7 @@ class ModularIntersectionFor(ModuleInstantiation):
             node.build_scope(for_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularLet(ModuleInstantiation):
     """Represents a let statement for module instantiations.
 
@@ -1220,7 +1220,7 @@ class ModularLet(ModuleInstantiation):
             child.build_scope(let_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularEcho(ModuleInstantiation):
     """Represents an echo statement for module instantiations.
 
@@ -1245,7 +1245,7 @@ class ModularEcho(ModuleInstantiation):
                 child.build_scope(children_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularAssert(ModuleInstantiation):
     """Represents an assert statement for module instantiations.
 
@@ -1270,7 +1270,7 @@ class ModularAssert(ModuleInstantiation):
                 child.build_scope(children_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularIf(ModuleInstantiation):
     """Represents an if statement for module instantiations (without else).
 
@@ -1294,7 +1294,7 @@ class ModularIf(ModuleInstantiation):
             node.build_scope(true_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularIfElse(ModuleInstantiation):
     """Represents an if-else statement for module instantiations.
 
@@ -1325,7 +1325,7 @@ class ModularIfElse(ModuleInstantiation):
             node.build_scope(false_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularModifierShowOnly(ModuleInstantiation):
     """Represents the '!' (show only) module modifier.
 
@@ -1342,7 +1342,7 @@ class ModularModifierShowOnly(ModuleInstantiation):
         self.child.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularModifierHighlight(ModuleInstantiation):
     """Represents the '#' (highlight) module modifier.
 
@@ -1359,7 +1359,7 @@ class ModularModifierHighlight(ModuleInstantiation):
         self.child.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularModifierBackground(ModuleInstantiation):
     """Represents the '%' (background) module modifier.
 
@@ -1376,7 +1376,7 @@ class ModularModifierBackground(ModuleInstantiation):
         self.child.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModularModifierDisable(ModuleInstantiation):
     """Represents the '*' (disable) module modifier.
 
@@ -1393,7 +1393,7 @@ class ModularModifierDisable(ModuleInstantiation):
         self.child.build_scope(parent_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModuleDeclaration(ASTNode):
     """Represents an OpenSCAD module declaration (definition).
 
@@ -1435,7 +1435,7 @@ class ModuleDeclaration(ASTNode):
             child.build_scope(mod_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class FunctionDeclaration(ASTNode):
     """Represents an OpenSCAD function declaration (definition).
 
@@ -1474,7 +1474,7 @@ class FunctionDeclaration(ASTNode):
         self.expr.build_scope(func_scope)
 
 
-@dataclass
+@dataclass(slots=True)
 class UseStatement(ASTNode):
     """Represents an OpenSCAD 'use' statement.
 
@@ -1487,7 +1487,7 @@ class UseStatement(ASTNode):
         return f"use <{self.filepath.val}>"
 
 
-@dataclass
+@dataclass(slots=True)
 class IncludeStatement(ASTNode):
     """Represents an OpenSCAD 'include' statement.
 
