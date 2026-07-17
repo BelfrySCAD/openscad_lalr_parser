@@ -1,5 +1,7 @@
 """Tests for the OpenSCAD pretty-printer."""
 
+import dataclasses
+
 import pytest
 from openscad_lalr_parser import getASTfromString, to_openscad
 from openscad_lalr_parser import (
@@ -744,7 +746,8 @@ class TestInlineBlockComments:
         def _has_commented_expr(node):
             if isinstance(node, CommentedExpr):
                 return True
-            for attr in vars(node).values():
+            for f in dataclasses.fields(node):
+                attr = getattr(node, f.name)
                 if isinstance(attr, list):
                     for item in attr:
                         if hasattr(item, '__dataclass_fields__') and _has_commented_expr(item):
