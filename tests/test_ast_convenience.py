@@ -525,6 +525,172 @@ class TestIncludeComments:
             assert any(isinstance(node, CommentLine) for node in ast2)
 
 
+class TestCommentAttachment:
+    """_attach_inline_comments/_attach_trailing_to_last_expr/_walk_attach's
+    less-common paths: comments that can't attach to any specific
+    sub-expression during the main walk and fall back to being attached as
+    trailing on the nearest preceding top-level node instead, plus a few
+    genuinely defensive branches exercised via direct calls (matching this
+    module's own private-function-tests-directly convention, e.g.
+    test_pretty_print.py's TestAsListHelper/TestCoalesceParenBracket)."""
+
+    def test_comment_after_semicolon_attaches_as_trailing_fallback(self):
+        # `// trailing` sits *after* the assignment's own closing `;`, so
+        # it's outside the Assignment node's own position span and never
+        # found "relevant" during _walk_attach's normal descent -- it's
+        # picked up by _attach_inline_comments's fallback pass instead,
+        # which walks _attach_trailing_to_last_expr.
+        code = "// standalone\ncube(1); // trailing\n"
+        ast = getASTfromString(code, include_comments=True)
+        assert isinstance(ast[0], CommentLine)
+        call = ast[1]
+        assert isinstance(call, ModularCall)
+        arg_expr = call.arguments[0].expr
+        from openscad_lalr_parser.nodes import CommentedExpr
+        assert isinstance(arg_expr, CommentedExpr)
+        assert any("trailing" in str(c) for c in arg_expr.trailing_comments)
+
+    def test_block_comment_with_no_preceding_code_but_trailing_code(self):
+        # A CommentSpan with nothing before it on its own line is only
+        # "inline" (not standalone) if there's real code *after* it on that
+        # same line -- the specific condition _is_inline_comment checks
+        # once its "something precedes it" check has already failed.
+        code = "x = 1 +\n/* mid */ 2;\n"
+        ast = getASTfromString(code, include_comments=True)
+        assert len(ast) == 1  # attached inline, not a standalone top-level node
+
+    def test_multiple_trailing_comments_on_same_target(self):
+        # Two inline comments that both end up unused after the main walk
+        # and both resolve to the same nearest-preceding node -- the second
+        # one appends onto the first's already-wrapped CommentedExpr rather
+        # than re-wrapping.
+        code = "cube(1); /* one */ /* two */\n"
+        ast = getASTfromString(code, include_comments=True)
+        from openscad_lalr_parser.nodes import CommentedExpr
+        arg_expr = ast[0].arguments[0].expr
+        assert isinstance(arg_expr, CommentedExpr)
+
+    def test_modifier_prefixed_call_comment_recurses_into_child(self):
+        # ModularModifierShowOnly/Highlight/Background/Disable each carry a
+        # single non-Expression `.child` field (the modified call) -- an
+        # inline comment inside that child's own arguments is only found by
+        # recursing into non_expr_children, not the direct expr_fields scan.
+        code = "!cube(/* note */ 1);"
+        ast = getASTfromString(code, include_comments=True)
+        from openscad_lalr_parser.nodes import CommentedExpr, ModularModifierShowOnly
+        assert isinstance(ast[0], ModularModifierShowOnly)
+        arg_expr = ast[0].child.arguments[0].expr
+        assert isinstance(arg_expr, CommentedExpr)
+
+    def test_multiple_commented_statements_skip_already_used_comments(self):
+        # Two separate statements each with their own inline comment --
+        # exercises _walk_attach's per-node comment scan correctly skipping
+        # a comment already consumed while processing an earlier node/field,
+        # and skipping comments outside the current node's own span.
+        code = "x = foo(/* a */ 2, 3 /* b */);\ny = bar(/* c */ 4);\n"
+        ast = getASTfromString(code, include_comments=True)
+        assert len(ast) == 2
+
+    # --- Direct calls: genuinely defensive/unreachable-via-real-parsing branches ---
+
+    def test_attach_inline_comments_skips_comment_nodes_in_ast_list(self):
+        # _attach_inline_comments is always called (see getASTfromString's
+        # own call order) *before* standalone comments are spliced into the
+        # node list by _inject_comments, so its own "skip comment/blank-line
+        # nodes while scanning for the nearest preceding real node" guard is
+        # never actually exercised through the normal pipeline. Called
+        # directly here with a hand-built ast_nodes list that already mixes
+        # a comment node in, matching the shape a future caller passing an
+        # already-comment-injected list would produce.
+        from openscad_lalr_parser import _attach_inline_comments
+        from openscad_lalr_parser.nodes import CommentedExpr, NumberLiteral
+
+        lead_comment = CommentLine(position=Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=5), text=" lead")
+        a = Assignment(
+            position=Position(origin="<t>", line=1, column=1, start_offset=6, end_offset=16),
+            name=Identifier(position=Position(origin="<t>", line=1, column=1, start_offset=6, end_offset=7), name="x"),
+            expr=NumberLiteral(position=Position(origin="<t>", line=1, column=1, start_offset=10, end_offset=11), val=1.0),
+        )
+        unused = CommentSpan(position=Position(origin="<t>", line=1, column=1, start_offset=20, end_offset=30), text=" trailing ")
+        _attach_inline_comments([lead_comment, a], [unused])
+        assert isinstance(a.expr, CommentedExpr)
+
+    def test_walk_attach_no_op_on_already_wrapped_node(self):
+        # _walk_attach's own early-return guard for a node that's already a
+        # CommentedExpr/CommentLine/CommentSpan -- never reached through
+        # real parsing (nothing recurses into an already-wrapped node), so
+        # called directly.
+        from openscad_lalr_parser import _walk_attach
+        lead_comment = CommentLine(position=Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=5), text=" x")
+        assert _walk_attach(lead_comment, [], set()) is None
+
+    def test_attach_trailing_to_last_expr_direct_expression_list_item(self):
+        # A node whose relevant field is a list of *bare* Expressions
+        # (rather than Expressions wrapped in Argument/Assignment
+        # containers) -- ListComprehension.elements has this shape, but a
+        # ListComprehension is never itself a fallback target through real
+        # parsing (only top-level statements are); called directly against
+        # one to exercise _attach_trailing_to_last_expr's own generic
+        # field-introspection for this shape.
+        from openscad_lalr_parser import _attach_trailing_to_last_expr
+        from openscad_lalr_parser.nodes import CommentedExpr, ListComprehension, NumberLiteral
+        pos = Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=10)
+        lc = ListComprehension(position=pos, elements=[NumberLiteral(position=pos, val=1.0)])
+        comment = CommentSpan(position=Position(origin="<t>", line=1, column=1, start_offset=20, end_offset=30), text=" x ")
+        _attach_trailing_to_last_expr(lc, comment)
+        assert isinstance(lc.elements[0], CommentedExpr)
+
+    def test_attach_trailing_to_last_expr_no_expression_field_is_a_no_op(self):
+        # A node with no Expression-typed field at all (last_expr_info stays
+        # None) -- BlankLine has no fields beyond position/scope.
+        from openscad_lalr_parser import _attach_trailing_to_last_expr
+        from openscad_lalr_parser.nodes import BlankLine
+        pos = Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=0)
+        bl = BlankLine(position=pos)
+        comment = CommentSpan(position=Position(origin="<t>", line=1, column=1, start_offset=5, end_offset=10), text=" x ")
+        assert _attach_trailing_to_last_expr(bl, comment) is None
+
+    def test_collect_container_exprs_list_of_expressions_field(self):
+        # _collect_container_exprs's own "container's relevant field is a
+        # list containing bare Expression items" branch -- every real
+        # container this function is documented for (PositionalArgument,
+        # NamedArgument, ParameterDeclaration) only ever has a *bare*
+        # Expression field, never a list of them, so this branch is
+        # exercised with a minimal purpose-built container matching the
+        # shape instead.
+        from dataclasses import dataclass
+        from openscad_lalr_parser import _collect_container_exprs
+        from openscad_lalr_parser.nodes import ASTNode, NumberLiteral
+
+        @dataclass(slots=True)
+        class _DummyExprListContainer(ASTNode):
+            items: list
+
+        pos = Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=10)
+        container = _DummyExprListContainer(position=pos, items=[NumberLiteral(position=pos, val=1.0)])
+        expr_fields, non_expr_children = [], []
+        _collect_container_exprs(container, expr_fields, non_expr_children)
+        assert len(expr_fields) == 1
+        assert expr_fields[0][:3] == (container, "items", 0)
+        assert non_expr_children == []
+
+    def test_collect_container_exprs_with_no_expr_fields_becomes_non_expr_child(self):
+        from dataclasses import dataclass
+        from openscad_lalr_parser import _collect_container_exprs
+        from openscad_lalr_parser.nodes import ASTNode
+
+        @dataclass(slots=True)
+        class _DummyEmptyContainer(ASTNode):
+            pass
+
+        pos = Position(origin="<t>", line=1, column=1, start_offset=0, end_offset=0)
+        container = _DummyEmptyContainer(position=pos)
+        expr_fields, non_expr_children = [], []
+        _collect_container_exprs(container, expr_fields, non_expr_children)
+        assert expr_fields == []
+        assert non_expr_children == [container]
+
+
 class TestErrorReporting:
     def test_error_shows_line_and_caret(self):
         old_stdout = sys.stdout

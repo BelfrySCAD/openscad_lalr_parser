@@ -1125,7 +1125,13 @@ class ModularCall(ModuleInstantiation):
     children: list[ModuleInstantiation]
 
     def __str__(self):
-        return f"{self.name}({', '.join(str(arg) for arg in self.arguments)})"
+        args = ', '.join(str(arg) for arg in self.arguments)
+        if not self.children:
+            return f"{self.name}({args})"
+        if len(self.children) == 1:
+            return f"{self.name}({args}) {self.children[0]}"
+        children = ', '.join(str(child) for child in self.children)
+        return f"{self.name}({args}) {{ {children} }}"
 
     def build_scope(self, parent_scope: "Scope") -> None:
         self.scope = parent_scope
