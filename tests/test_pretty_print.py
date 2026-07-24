@@ -222,6 +222,120 @@ class TestCommentFormatting:
         assert "/* block */" in out
 
 
+class TestDeclarationSignatureComments:
+    """pre_name_comments/post_name_comments/post_params_comments and
+    ParameterDeclaration.leading_comments/trailing_comments were declared,
+    serialized, and rendered, but never populated by the comment-attachment
+    pipeline -- _walk_attach's generic Expression-field scan only ever
+    wraps a value that IS an Expression, and a parameter with no default
+    value has no Expression field at all, so these comments used to fall
+    through onto the function/module body instead. Fixed by
+    _attach_declaration_comments (__init__.py), which claims
+    signature-gap comments before the generic mechanism ever sees them.
+    """
+
+    def _roundtrip_stable(self, code):
+        ast = getASTfromString(code, include_comments=True)
+        out = to_openscad(ast)
+        ast2 = getASTfromString(out, include_comments=True)
+        out2 = to_openscad(ast2)
+        assert out == out2, f"not idempotent:\n{out!r}\nvs\n{out2!r}"
+        return out
+
+    def test_parameter_with_no_default_gets_leading_comment(self):
+        ast = getASTfromString("function f(/* lead */ x) = x;\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, FunctionDeclaration)
+        assert len(decl.parameters) == 1
+        assert len(decl.parameters[0].leading_comments) == 1
+        assert decl.expr.__class__.__name__ == "Identifier", "must NOT have fallen through to the body"
+
+        out = self._roundtrip_stable("function f(/* lead */ x) = x;\n")
+        assert "(/* lead */ x)" in out
+
+    def test_pre_name_comment_populates_field(self):
+        ast = getASTfromString("function /* pre */ f(x) = x;\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, FunctionDeclaration)
+        assert len(decl.pre_name_comments) == 1
+
+        out = self._roundtrip_stable("function /* pre */ f(x) = x;\n")
+        assert "function /* pre */ f" in out
+
+    def test_post_name_comment_populates_field_via_paren_scan(self):
+        # Requires locating the real '(' token by scanning raw source (the
+        # grammar captures no location for it) -- exercises that scan
+        # directly, not just via the rendered/round-tripped output.
+        ast = getASTfromString("function f /* post-name */ (x) = x;\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, FunctionDeclaration)
+        assert len(decl.post_name_comments) == 1
+
+        out = self._roundtrip_stable("function f /* post-name */ (x) = x;\n")
+        assert "function f /* post-name */(" in out
+
+    def test_post_params_comment_populates_field(self):
+        ast = getASTfromString("module m(x) /* post-params */ { cube(x); }\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, ModuleDeclaration)
+        assert len(decl.post_params_comments) == 1
+        self._roundtrip_stable("module m(x) /* post-params */ { cube(x); }\n")
+
+    def test_trailing_comment_on_last_parameter_populates_field(self):
+        ast = getASTfromString("module m(x /* trail */) { cube(x); }\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, ModuleDeclaration)
+        assert len(decl.parameters) == 1
+        assert len(decl.parameters[0].trailing_comments) == 1
+        self._roundtrip_stable("module m(x /* trail */) { cube(x); }\n")
+
+    def test_empty_parameter_list_comment_falls_into_post_params(self):
+        # ponytail case: no parameter exists to own a comment inside `()`,
+        # so it's folded into post_params_comments rather than a dedicated
+        # field.
+        ast = getASTfromString("module m(/* empty */) { cube(1); }\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, ModuleDeclaration)
+        assert decl.parameters == []
+        assert len(decl.post_params_comments) == 1
+
+        out = self._roundtrip_stable("module m(/* empty */) { cube(1); }\n")
+        assert "m() /* empty */ {" in out
+
+    def test_comment_between_two_parameters_attaches_to_seconds_leading(self):
+        ast = getASTfromString("module m(x, /* mid */ y) { cube(x + y); }\n", include_comments=True)
+        decl = ast[0]
+        assert isinstance(decl, ModuleDeclaration)
+        assert len(decl.parameters) == 2
+        assert decl.parameters[0].trailing_comments == []
+        assert len(decl.parameters[1].leading_comments) == 1
+        self._roundtrip_stable("module m(x, /* mid */ y) { cube(x + y); }\n")
+
+    def test_nested_module_declaration_still_gets_own_comments(self):
+        # Confirms _walk_attach_decl_comments' recursion reaches a
+        # declaration nested inside another declaration's body, not just
+        # top-level ones.
+        code = "module outer() { module inner(/* lead */ x) { cube(x); } }\n"
+        ast = getASTfromString(code, include_comments=True)
+        outer = ast[0]
+        assert isinstance(outer, ModuleDeclaration)
+        assert len(outer.children) == 1
+        inner = outer.children[0]
+        assert isinstance(inner, ModuleDeclaration)
+        assert len(inner.parameters) == 1
+        assert len(inner.parameters[0].leading_comments) == 1
+
+    def test_every_gap_kind_combined_idempotent(self):
+        code = (
+            "function /* pre */ f /* post-name */ (\n"
+            "    /* lead-a */ a,\n"
+            "    b, /* mid */\n"
+            "    c /* trail */\n"
+            ") /* post-params */ = a + b + c;\n"
+        )
+        self._roundtrip_stable(code)
+
+
 class TestBlankLineSeparation:
     def test_no_blank_line_before_function(self):
         assert "\n\n" not in _fmt("x=1;\nfunction f(x)=x;")

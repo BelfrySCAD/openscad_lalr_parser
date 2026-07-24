@@ -385,6 +385,147 @@ def _collect_container_exprs(container: ASTNode, expr_fields: list, non_expr_chi
         non_expr_children.append(container)
 
 
+def _find_char_skipping_comments(code: str, frm: int, ch: str, comments: list[ASTNode]) -> int:
+    """Scan raw source from `frm` for the next occurrence of `ch`, skipping
+    over any already-extracted comment span encountered along the way (so a
+    stray '(' or ')' inside a comment's own text is never mistaken for the
+    real token). Returns -1 if not found.
+
+    Needed because the grammar captures no location for the parameter
+    list's own '(' / ')' tokens -- only NAME and the whole declaration's
+    span are available (see transformer.py's
+    function_definition/module_definition/parameter_with_default).
+    """
+    i = frm
+    n = len(code)
+    while i < n:
+        skipped = False
+        for c in comments:
+            if c is not None and c.position.start_offset == i:
+                i = c.position.end_offset
+                skipped = True
+                break
+        if skipped:
+            continue
+        if code[i] == ch:
+            return i
+        i += 1
+    return -1
+
+
+def _claim_comment_spans_in_range(lo: int, hi: int, out: list, comments: list) -> None:
+    """Moves every CommentSpan in `comments` whose start offset falls in
+    [lo, hi) into `out`, nulling its slot in `comments` in place so a later
+    pass (the inline/standalone split) never sees it again."""
+    if lo >= hi:
+        return
+    for idx, c in enumerate(comments):
+        if c is None or not isinstance(c, CommentSpan):
+            continue
+        cs = c.position.start_offset
+        if lo <= cs < hi:
+            out.append(c)
+            comments[idx] = None
+
+
+def _claim_decl_signature_comments(decl: ASTNode, name: Identifier, parameters: list[ParameterDeclaration],
+                                    body_start: int, pre_name: list, post_name: list, post_params: list,
+                                    code: str, comments: list) -> None:
+    """Claims '/* */' comments (CommentSpan only -- these fields' own
+    declared type) in every structural gap a FunctionDeclaration/
+    ModuleDeclaration doesn't expose as any Expression field: before the
+    name, between the name and the parameter list, between adjacent
+    parameters (including a parameter with no default value, which
+    _walk_attach's own generic Expression-field scan never visits at all,
+    since it only descends into fields whose value IS an Expression),
+    between the last parameter and ')', and between ')' and the body.
+
+    ponytail: when there are zero parameters, the "between name and '('"
+    and "between '(' and ')'" gaps are both real but there's no parameter
+    to own the latter -- folded into post_params_comments rather than
+    adding a dedicated field neither language's AST declares.
+    """
+    name_start = name.position.start_offset
+    name_end = name.position.end_offset
+    _claim_comment_spans_in_range(decl.position.start_offset, name_start, pre_name, comments)
+
+    open_paren = _find_char_skipping_comments(code, name_end, '(', comments)
+    paren_open_pos = open_paren if open_paren >= 0 else name_end
+    _claim_comment_spans_in_range(name_end, paren_open_pos, post_name, comments)
+    cursor = open_paren + 1 if open_paren >= 0 else name_end
+
+    for p in parameters:
+        _claim_comment_spans_in_range(cursor, p.position.start_offset, p.leading_comments, comments)
+        cursor = p.position.end_offset
+
+    close_paren = _find_char_skipping_comments(code, cursor, ')', comments)
+    paren_close_pos = close_paren if close_paren >= 0 else cursor
+    if parameters:
+        _claim_comment_spans_in_range(cursor, paren_close_pos, parameters[-1].trailing_comments, comments)
+    else:
+        _claim_comment_spans_in_range(cursor, paren_close_pos, post_params, comments)
+    cursor = close_paren + 1 if close_paren >= 0 else cursor
+    _claim_comment_spans_in_range(cursor, body_start, post_params, comments)
+
+
+def _walk_attach_decl_comments(node: ASTNode, code: str, comments: list) -> None:
+    """Recurses through `node` looking for FunctionDeclaration/
+    ModuleDeclaration nodes (which can nest inside a module's own
+    children), claiming their signature-gap comments. A generic
+    reflection-based walk over dataclass fields (mirrors _walk_attach's own
+    field introspection), since -- unlike the C++ port, which needs an
+    explicit per-NodeKind switch -- Python's dataclasses.fields() already
+    gives a free generic tree walk.
+    """
+    if not isinstance(node, ASTNode) or isinstance(node, (CommentedExpr, CommentLine, CommentSpan)):
+        return
+
+    if isinstance(node, FunctionDeclaration):
+        _claim_decl_signature_comments(node, node.name, node.parameters, node.expr.position.start_offset,
+                                        node.pre_name_comments, node.post_name_comments, node.post_params_comments,
+                                        code, comments)
+    elif isinstance(node, ModuleDeclaration):
+        body_start = node.children[0].position.start_offset if node.children else node.position.end_offset
+        _claim_decl_signature_comments(node, node.name, node.parameters, body_start, node.pre_name_comments,
+                                        node.post_name_comments, node.post_params_comments, code, comments)
+
+    for f in dataclasses.fields(node):
+        if f.name in _SKIP_FIELDS:
+            continue
+        val = getattr(node, f.name)
+        if isinstance(val, ASTNode):
+            _walk_attach_decl_comments(val, code, comments)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, ASTNode):
+                    _walk_attach_decl_comments(item, code, comments)
+
+
+def _attach_declaration_comments(ast_nodes: list[ASTNode], code: str, comments: list) -> None:
+    """Claims declaration-signature comments across the whole AST. Must run
+    BEFORE _classify_comments/_attach_inline_comments -- a '/* */' comment
+    alone on its own line before a parameter is classified *standalone* by
+    _is_inline_comment, which this pass still needs to claim, so it operates
+    on the full extracted comment list, not just the inline subset.
+    """
+    for node in ast_nodes:
+        _walk_attach_decl_comments(node, code, comments)
+
+
+def _attach_all_comments(ast: list[ASTNode], code: str, origin: str) -> list[ASTNode]:
+    """Shared by getASTfromString/_parse_single_file: extracts comments,
+    claims declaration-signature comments first (see
+    _attach_declaration_comments), then runs the existing inline/standalone
+    pipeline over whatever's left.
+    """
+    comments = _extract_comments(code, origin)
+    _attach_declaration_comments(ast, code, comments)
+    comments = [c for c in comments if c is not None]
+    inline, standalone = _classify_comments(comments, code)
+    _attach_inline_comments(ast, inline)
+    return _inject_comments(ast, standalone, code, origin)
+
+
 def _inject_comments(ast_nodes: list[ASTNode], comments: list[ASTNode], code: str, origin: str) -> list[ASTNode]:
     """Merge standalone comment nodes into top-level AST node list."""
     if not comments:
@@ -500,10 +641,7 @@ def getASTfromString(code: str, include_comments: bool = False, origin: str = "<
     ast = parse_ast(code, origin=origin, source_map=source_map)
 
     if ast is not None and include_comments:
-        comments = _extract_comments(code, origin)
-        inline, standalone = _classify_comments(comments, code)
-        _attach_inline_comments(ast, inline)
-        ast = _inject_comments(ast, standalone, code, origin)
+        ast = _attach_all_comments(ast, code, origin)
 
     return ast
 
@@ -725,10 +863,7 @@ def _parse_single_file(file_path: str, include_comments: bool = False) -> list[A
     ast = parse_ast(code, origin=file_path, source_map=source_map)
 
     if ast is not None and include_comments:
-        comments = _extract_comments(code, file_path)
-        inline, standalone = _classify_comments(comments, code)
-        _attach_inline_comments(ast, inline)
-        ast = _inject_comments(ast, standalone, code, file_path)
+        ast = _attach_all_comments(ast, code, file_path)
 
     _ast_cache[cache_key] = (ast, current_mtime)
     _save_to_disk_cache(file_path, include_comments, current_mtime, ast)
