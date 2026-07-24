@@ -804,3 +804,258 @@ class TestInlineBlockComments:
         out = _fmt_with_comments("x = 3 /* str */ + 4;")
         assert "/* str */" in out
         assert "3" in out and "4" in out
+
+
+# --- Coverage gap-fill: _fmt_list_elem's remaining clause kinds -----------
+
+class TestListCompCForShortHeader:
+    def test_short_header_stays_on_one_line(self):
+        out = _fmt("x = [for (i = 0; i < 3; i = i + 1) i];")
+        assert "for (i = 0; i < 3; i = i + 1)\n" in out
+        assert "for (\n" not in out
+
+
+class TestListCompLetFormatting:
+    """`let(...)` immediately followed by another comprehension clause
+    (for/each/if/let) parses as ListCompLet, not LetOp -- see
+    grammar.lark's listcomp_let rule (body must be listcomp_elements)."""
+
+    def test_single_assignment_inline(self):
+        out = _fmt("x = [let(a = 1) for (i = [1:3]) i + a];")
+        assert "let(a = 1)\n" in out
+
+    def test_multi_assignment_wraps(self):
+        out = _fmt("x = [let(a = 1, b = 2) for (i = [1:3]) i + a + b];")
+        assert "let(\n" in out
+        assert "a = 1,\n" in out
+        assert "b = 2\n" in out
+
+
+class TestLetAsListElementFormatting:
+    """`let(...)expr` where `expr` is a plain trailing expression (not
+    another comprehension clause) parses as a bare LetOp list element,
+    handled by a separate branch of _fmt_list_elem from ListCompLet above."""
+
+    def test_short_inline(self):
+        out = _fmt("x = [let(a = 1) a];")
+        assert "let(a = 1) a" in out
+
+    def test_multi_assignment_wraps(self):
+        out = _fmt("x = [let(a = 1, b = 2) a + b];")
+        assert "let(\n" in out
+        assert "a = 1,\n" in out
+
+    def test_long_body_wraps_onto_new_line(self):
+        code = "x = [let(a = 1) very_long_variable_name_alpha_beta_gamma_delta_epsilon_zeta_theta + a];"
+        out = _fmt(code)
+        assert "let(a = 1)\n" in out
+
+
+class TestNestedListComprehensionElement:
+    def test_each_wraps_a_list_comprehension(self):
+        out = _fmt("x = [each [for (i = [1:3]) i]];")
+        assert "each" in out
+        assert "for (i = [1 : 1 : 3])" in out
+
+
+class TestListCompIfFormatting:
+    def test_if_only(self):
+        out = _fmt("x = [for (i = [0:9]) if (i % 2 == 0) i];")
+        assert "if (i % 2 == 0)\n" in out
+
+    def test_if_else(self):
+        out = _fmt("x = [for (i = [0:9]) if (i % 2 == 0) i else -i];")
+        assert "if (i % 2 == 0)\n" in out
+        assert "else\n" in out
+
+    def test_each_plain_list(self):
+        out = _fmt("x = [each [1, 2, 3]];")
+        assert "each" in out
+
+
+# --- Coverage gap-fill: multiline named arguments -------------------------
+
+class TestNamedArgumentMultilineFormatting:
+    def test_long_call_with_named_args_wraps(self):
+        code = "foo(alpha_value=1111111, beta_value=2222222, gamma_value=3333333, delta_value=4444444);"
+        out = _fmt(code)
+        assert "foo(\n" in out
+        assert "alpha_value=1111111,\n" in out
+
+
+# --- Coverage gap-fill: ternary edge cases ---------------------------------
+
+class TestTernaryEdgeCases:
+    def test_nested_ternary_in_true_branch(self):
+        # A ternary nested in the *true* branch (as opposed to a chained
+        # `? : ? :` in the false branch, handled by _fmt_ternary_chain)
+        # takes a different formatting path.
+        out = _fmt("x = a ? (b ? c : d) : e;")
+        assert "?" in out and ":" in out
+
+    def test_comment_before_nested_false_branch_ternary(self):
+        # An inline comment sitting right before a chained ternary's next
+        # link wraps that link in a CommentedExpr; _fmt_ternary_chain must
+        # see through that wrapper (node = node.expr) to keep following the
+        # chain instead of stopping early and re-rendering it as a nested
+        # (indented) ternary. Note: seeing through the wrapper this way
+        # means the comment itself is dropped from the formatted output --
+        # a real, if minor, existing quirk this test documents rather than
+        # papers over.
+        out = _fmt_with_comments("x = c1 ? a : /* mid */ c2 ? b : d;")
+        assert "/* mid */" not in out
+        assert out == "x = c1 ?\n    a\n: c2 ?\n    b\n: d;"
+
+
+# --- Coverage gap-fill: binary op with a multiline list operand -----------
+
+class TestBinaryOpMultilineLeftOperand:
+    def test_multiline_list_left_of_binary_op(self):
+        code = "x = [very_long_element_name_a, very_long_element_name_b, very_long_element_name_c, very_long_element_name_d] + y;"
+        out = _fmt(code)
+        assert out.startswith("x = [\n")
+        assert "] + y;" in out
+
+
+# --- Coverage gap-fill: line comments (not just block comments) -----------
+
+class TestLineCommentAttachment:
+    def test_comment_before_next_call_argument(self):
+        # A `//` comment can only be "inline" (per _classify_comments) when
+        # something precedes it on its own line -- e.g. sitting right after
+        # one call argument, before the next. It attaches as a *leading*
+        # comment on that next argument (a CommentLine, not CommentSpan --
+        # the branch other comment tests here never exercise). The call
+        # must actually go multiline (_fmt_argument -> _fmt_expr) for this
+        # to matter -- a short call renders arguments via plain str(), which
+        # never reaches _fmt_expr's CommentedExpr/CommentLine branch at all.
+        code = ("foo(alpha_value_number_one // note\n"
+                ", beta_value_number_two, gamma_value_number_three, delta_value_number_four);")
+        out = _fmt_with_comments(code)
+        assert "// note" in out
+        assert "alpha_value_number_one,\n" in out
+
+    def test_comment_before_middle_list_element(self):
+        code = "x = [very_long_element_name_a, b // note\n, very_long_element_name_c, very_long_element_name_d];"
+        out = _fmt_with_comments(code)
+        assert "// note" in out
+
+    def test_comment_before_first_list_element(self):
+        # A leading CommentLine on the *first* element (nothing yet in
+        # `lines` to append it to) takes a different branch than a later
+        # element's leading comment (which appends onto the previous line).
+        code = ("x = [ // header\n"
+                "very_long_element_name_a, very_long_element_name_b, "
+                "very_long_element_name_c, very_long_element_name_d];")
+        out = _fmt_with_comments(code)
+        assert "// header" in out
+        assert out.startswith("x = [\n")
+
+
+# --- Coverage gap-fill: long non-list assignment RHS -----------------------
+
+class TestLongAssignmentWraps:
+    def test_long_non_list_rhs_wraps_to_next_line(self):
+        code = "some_very_long_variable_name_xxxxxxxxxx = another_long_expression_value_yyyyyyy + 1;"
+        out = _fmt(code)
+        lines = out.split("\n")
+        assert lines[0].endswith("=")
+        assert "another_long_expression_value_yyyyyyy + 1;" in lines[1]
+
+
+# --- Coverage gap-fill: _fmt_node's defensive fallback ---------------------
+
+class TestFmtNodeFallback:
+    def test_unhandled_node_type_falls_back_to_str(self):
+        # Every real top-level/body statement kind (comments, use/include,
+        # assignments, function/module decls, every ModuleInstantiation
+        # subclass) is handled explicitly by _fmt_node; this exercises the
+        # final `return f"{pad}{node}"` safety net directly with a node
+        # kind that never actually reaches _fmt_node through real parsing
+        # (ParameterDeclaration only ever appears inside a decl's own
+        # parameter list, formatted by _fmt_parameter instead).
+        from openscad_lalr_parser.nodes import Identifier, ParameterDeclaration, Position
+        from openscad_lalr_parser.pretty_print import _fmt_node
+        pos = Position(origin="<test>", line=1, column=1, start_offset=0, end_offset=0)
+        node = ParameterDeclaration(position=pos, name=Identifier(position=pos, name="x"), default=None)
+        assert _fmt_node(node, 4, 4) == "    " + str(node)
+
+
+class TestFmtInstFallback:
+    def test_unhandled_node_type_falls_back_to_str(self):
+        # Same story as TestFmtNodeFallback, for _fmt_inst's own catch-all:
+        # every real ModuleInstantiation subclass (call/for/intersection_for/
+        # let/echo/assert/if/if-else/the 4 modifiers) plus Assignment is
+        # handled explicitly; BlankLine never legitimately reaches _fmt_inst
+        # through real parsing (a standalone blank line/comment inside a
+        # control-flow body attaches to a sibling expression instead, per
+        # _attach_inline_comments -- see test_ast_convenience.py).
+        from openscad_lalr_parser.nodes import BlankLine, Position
+        from openscad_lalr_parser.pretty_print import _fmt_inst
+        pos = Position(origin="<test>", line=1, column=1, start_offset=0, end_offset=0)
+        node = BlankLine(position=pos)
+        assert _fmt_inst(node, 4, 4) == "    ;"
+
+
+class TestFmtArgumentFallback:
+    def test_unhandled_node_type_falls_back_to_str(self):
+        # _fmt_argument's own equivalent fallback: only PositionalArgument/
+        # NamedArgument exist as real Argument subclasses, so this is
+        # unreachable through real parsing too.
+        from openscad_lalr_parser.nodes import Identifier, Position
+        from openscad_lalr_parser.pretty_print import _fmt_argument
+        pos = Position(origin="<test>", line=1, column=1, start_offset=0, end_offset=0)
+        node = Identifier(position=pos, name="not_an_argument")
+        assert _fmt_argument(node, 0, 4) == "not_an_argument"
+
+
+# --- Coverage gap-fill: _fmt_inst's own multiline-wrapping branches -------
+
+class TestModularForMultilineFormatting:
+    def test_long_assignments_wrap(self):
+        code = "for (very_long_variable_name_alpha = [0:100], very_long_variable_name_beta = [0:50]) cube(1);"
+        out = _fmt(code)
+        assert out.startswith("for (\n")
+        assert "very_long_variable_name_alpha = [0 : 1 : 100],\n" in out
+
+
+class TestModularIntersectionForMultilineFormatting:
+    def test_long_assignments_wrap(self):
+        code = "intersection_for (very_long_variable_name_alpha = [0:100], very_long_variable_name_beta = [0:50]) cube(1);"
+        out = _fmt(code)
+        assert out.startswith("intersection_for (\n")
+        assert "very_long_variable_name_alpha = [0 : 1 : 100],\n" in out
+
+
+class TestModularLetMultiAssignmentFormatting:
+    def test_multiple_assignments_wrap_even_when_short(self):
+        # Unlike for/intersection_for (which only wrap past the length
+        # limit), a statement-form let() with more than one assignment
+        # always wraps, regardless of length.
+        out = _fmt("let (x = 1, y = 2) cube(1);")
+        assert out == "let (\n    x = 1,\n    y = 2\n)\n    cube(1);"
+
+
+class TestModularEchoAssertMultilineFormatting:
+    def test_long_echo_args_wrap(self):
+        code = "echo(long_arg_a, long_arg_b, long_arg_c, long_arg_d, long_arg_e, long_arg_f, long_arg_g, long_arg_h) cube(1);"
+        out = _fmt(code)
+        assert out.startswith("echo(\n")
+        assert "long_arg_a,\n" in out
+
+    def test_long_assert_args_wrap(self):
+        code = "assert(long_arg_a, long_arg_b, long_arg_c, long_arg_d, long_arg_e, long_arg_f, long_arg_g, long_arg_h) cube(1);"
+        out = _fmt(code)
+        assert out.startswith("assert(\n")
+        assert "long_arg_a,\n" in out
+
+
+class TestAssignmentAsControlFlowChild:
+    def test_assignment_inside_for_block(self):
+        # _fmt_inst's own Assignment branch (distinct from _fmt_node's) --
+        # reached only when an assignment appears as a control-flow
+        # statement's *child* (via _fmt_child), not a module body (which
+        # goes through _fmt_block -> _fmt_node directly).
+        out = _fmt("for (i=[0:3]) { x = i; cube(x); }")
+        assert "x = i;\n" in out
+        assert "cube(x);" in out
