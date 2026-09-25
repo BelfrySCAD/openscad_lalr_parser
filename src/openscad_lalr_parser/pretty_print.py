@@ -1,5 +1,6 @@
 """Pretty-printer: convert an OpenSCAD AST back to formatted source code."""
 from __future__ import annotations
+import dataclasses
 from .nodes import (
     ASTNode, Assignment, FunctionDeclaration, ModuleDeclaration, ParameterDeclaration,
     UseStatement, IncludeStatement,
@@ -20,6 +21,7 @@ from .nodes import (
     UndefinedLiteral,
     CommentedExpr,
     PrimaryCall,
+    RenderExpression,
     ListComprehension,
     ListCompFor,
     ListCompCFor,
@@ -160,11 +162,75 @@ def _fmt_list_elem(elem, indent: int, w: int) -> str:
     return str(elem)
 
 
+def _strip_line_comments(expr):
+    """(leading, trailing, expr) with the `//` comments taken off a
+    CommentedExpr; anything else comes back with none."""
+    if not isinstance(expr, CommentedExpr):
+        return [], [], expr
+    lead = [c for c in expr.leading_comments if isinstance(c, CommentLine)]
+    trail = [c for c in expr.trailing_comments if isinstance(c, CommentLine)]
+    if not lead and not trail:
+        return [], [], expr
+    rest_lead = [c for c in expr.leading_comments if not isinstance(c, CommentLine)]
+    rest_trail = [c for c in expr.trailing_comments if not isinstance(c, CommentLine)]
+    if not rest_lead and not rest_trail:
+        return lead, trail, expr.expr
+    return lead, trail, dataclasses.replace(expr, leading_comments=rest_lead, trailing_comments=rest_trail)
+
+
+def _pop_line_comments(item):
+    """(leading, trailing, item) with the `//` comments taken off an argument
+    or parameter, wherever on it the comment attacher put them."""
+    lead, trail, changes = [], [], {}
+    fields = {PositionalArgument: ("expr",), NamedArgument: ("name", "expr"),
+              ParameterDeclaration: ("name", "default")}.get(type(item), ())
+    for name in fields:
+        l, t, cleaned = _strip_line_comments(getattr(item, name))
+        if l or t:
+            lead += l
+            trail += t
+            changes[name] = cleaned
+    if isinstance(item, ParameterDeclaration):
+        for name, out in (("leading_comments", lead), ("trailing_comments", trail)):
+            comments = getattr(item, name)
+            if any(isinstance(c, CommentLine) for c in comments):
+                out += [c for c in comments if isinstance(c, CommentLine)]
+                changes[name] = [c for c in comments if not isinstance(c, CommentLine)]
+    return lead, trail, (dataclasses.replace(item, **changes) if changes else item)
+
+
+def _has_line_comment(node) -> bool:
+    """Whether a `//` comment is attached anywhere in `node` (a node or a
+    list of them). A line comment ends at the newline, so whatever holds one
+    cannot be printed on a single line without commenting out the rest."""
+    if isinstance(node, CommentLine):
+        return True
+    if isinstance(node, list):
+        return any(_has_line_comment(n) for n in node)
+    if isinstance(node, ASTNode):
+        return any(_has_line_comment(getattr(node, f.name))
+                   for f in dataclasses.fields(node) if f.name not in ("position", "scope"))
+    return False
+
+
 def _fmt_multiline_args(head: str, args: list, indent: int, w: int, fmt_fn=str) -> str:
+    """One argument (or parameter) per line. A `//` comment before an item is
+    moved to the end of the line before it -- the `(` line for the first --
+    and one after it goes after its comma: printed where it was attached, it
+    would sit alone on a line (and re-parse as a standalone comment) or
+    swallow the comma. Same treatment as list elements get."""
     inner_pad = " " * (indent + w)
     pad = " " * indent
-    arg_lines = (",\n" + inner_pad).join(fmt_fn(a) for a in args)
-    return f"{head}(\n{inner_pad}{arg_lines}\n{pad})"
+    lines = [f"{head}("]
+    for i, arg in enumerate(args):
+        lead, trail, arg = _pop_line_comments(arg)
+        if lead:
+            lines[-1] += "  " + "  ".join(str(c) for c in lead)
+        line = f"{inner_pad}{fmt_fn(arg)}{',' if i < len(args) - 1 else ''}"
+        if trail:
+            line += "  " + "  ".join(str(c) for c in trail)
+        lines.append(line)
+    return "\n".join(lines) + f"\n{pad})"
 
 
 def _fmt_assign(assign, indent: int, w: int) -> str:
@@ -231,16 +297,16 @@ def _fmt_expr(expr, indent: int, w: int) -> str:
             f"{pad2}? {_fmt_branch(expr.true_expr)}\n"
             f"{pad2}: {_fmt_branch(expr.false_expr)}"
         )
-    if isinstance(expr, AssertOp):
-        args = ", ".join(str(a) for a in expr.arguments)
+    if isinstance(expr, (AssertOp, EchoOp)):
+        head = "assert" if isinstance(expr, AssertOp) else "echo"
+        if _has_line_comment(expr.arguments):
+            call = _fmt_multiline_args(head, expr.arguments, indent, w,
+                                       fmt_fn=lambda a: _fmt_argument(a, indent + w, w))
+        else:
+            call = f"{head}({', '.join(str(a) for a in expr.arguments)})"
         if isinstance(expr.body, UndefinedLiteral):
-            return f"assert({args})"
-        return f"assert({args})\n{pad}{_fmt_expr(expr.body, indent, w)}"
-    if isinstance(expr, EchoOp):
-        args = ", ".join(str(a) for a in expr.arguments)
-        if isinstance(expr.body, UndefinedLiteral):
-            return f"echo({args})"
-        return f"echo({args})\n{pad}{_fmt_expr(expr.body, indent, w)}"
+            return call
+        return f"{call}\n{pad}{_fmt_expr(expr.body, indent, w)}"
     if isinstance(expr, LetOp):
         inner_pad = " " * (indent + w)
         formatted = [_fmt_assign(a, indent + w, w) for a in expr.assignments]
@@ -252,9 +318,13 @@ def _fmt_expr(expr, indent: int, w: int) -> str:
             )
         assigns = ", ".join(formatted)
         return f"let({assigns})\n{pad}{_fmt_expr(expr.body, indent, w)}"
+    if isinstance(expr, RenderExpression):
+        # Always braced: `x = render() cube(1);` does not parse. _fmt_block's
+        # statements bring their own terminators.
+        return f"render({_join_str(expr.arguments)}) {_fmt_block(expr.children, indent, w)}"
     if isinstance(expr, PrimaryCall):
         inline = str(expr)
-        if len(inline) + indent > _MULTILINE_CHAR_LIMIT:
+        if len(inline) + indent > _MULTILINE_CHAR_LIMIT or _has_line_comment(expr.arguments):
             return _fmt_multiline_args(
                 str(expr.left), expr.arguments, indent, w,
                 fmt_fn=lambda a: _fmt_argument(a, indent + w, w),
@@ -344,7 +414,7 @@ def _fmt_node(node: ASTNode, indent: int, w: int) -> str:
         params_inline = _join_str_params(node.parameters)
         post_p_str = f" {post_p}" if post_p else ""
         expr_pad = " " * (indent + w)
-        if len(f"{head}({params_inline}){post_p_str} =") > _MULTILINE_CHAR_LIMIT:
+        if len(f"{head}({params_inline}){post_p_str} =") > _MULTILINE_CHAR_LIMIT or _has_line_comment(node.parameters):
             param_block = _fmt_multiline_args(head, node.parameters, indent, w, fmt_fn=_fmt_parameter)
             return f"{param_block}{post_p_str} =\n{expr_pad}{_fmt_expr(node.expr, indent + w, w)};"
         return f"{head}({params_inline}){post_p_str} =\n{expr_pad}{_fmt_expr(node.expr, indent + w, w)};"
@@ -356,7 +426,7 @@ def _fmt_node(node: ASTNode, indent: int, w: int) -> str:
         params_inline = _join_str_params(node.parameters)
         post_p_str = f" {post_p}" if post_p else ""
         block = _fmt_block(node.children, indent, w)
-        if len(f"{head}({params_inline}){post_p_str}") > _MULTILINE_CHAR_LIMIT:
+        if len(f"{head}({params_inline}){post_p_str}") > _MULTILINE_CHAR_LIMIT or _has_line_comment(node.parameters):
             param_block = _fmt_multiline_args(head, node.parameters, indent, w, fmt_fn=_fmt_parameter)
             return f"{param_block}{post_p_str} {block}"
         return f"{head}({params_inline}){post_p_str} {block}"
@@ -403,7 +473,7 @@ def _fmt_inst(node: ModuleInstantiation, indent: int, w: int, prefix: str = "") 
     if isinstance(node, ModularCall):
         head = f"{pad}{prefix}{node.name}"
         inline = f"{head}({_join_str(node.arguments)})"
-        if len(inline) > _MULTILINE_CHAR_LIMIT:
+        if len(inline) > _MULTILINE_CHAR_LIMIT or _has_line_comment(node.arguments):
             call = _fmt_multiline_args(
                 head, node.arguments, indent, w,
                 fmt_fn=lambda a: _fmt_argument(a, indent + w, w),
@@ -447,7 +517,7 @@ def _fmt_inst(node: ModuleInstantiation, indent: int, w: int, prefix: str = "") 
     if isinstance(node, ModularEcho):
         head = f"{pad}{prefix}echo"
         inline = f"{head}({_join_str(node.arguments)})"
-        if len(inline) > _MULTILINE_CHAR_LIMIT:
+        if len(inline) > _MULTILINE_CHAR_LIMIT or _has_line_comment(node.arguments):
             call = _fmt_multiline_args(head, node.arguments, indent, w,
                                        fmt_fn=lambda a: _fmt_argument(a, indent + w, w))
         else:
@@ -457,7 +527,7 @@ def _fmt_inst(node: ModuleInstantiation, indent: int, w: int, prefix: str = "") 
     if isinstance(node, ModularAssert):
         head = f"{pad}{prefix}assert"
         inline = f"{head}({_join_str(node.arguments)})"
-        if len(inline) > _MULTILINE_CHAR_LIMIT:
+        if len(inline) > _MULTILINE_CHAR_LIMIT or _has_line_comment(node.arguments):
             call = _fmt_multiline_args(head, node.arguments, indent, w,
                                        fmt_fn=lambda a: _fmt_argument(a, indent + w, w))
         else:

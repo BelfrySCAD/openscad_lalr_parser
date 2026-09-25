@@ -88,6 +88,7 @@ single_module_instantiation: modular_for
     | modular_let
     | modular_assert
     | modular_echo
+    | modular_render
     | modular_call
 
 child_statement: empty_statement
@@ -102,6 +103,12 @@ modular_let: "let" "(" assignments_expr ")" child_statement
 modular_assert: "assert" "(" arguments ")" child_statement
 modular_echo: "echo" "(" arguments ")" child_statement
 modular_call: NAME "(" arguments ")" child_statement
+
+// `render` is a keyword so it can lead an expression-position geometry block
+// (render_expr below): LALR(1) can't otherwise tell `render(` there from a
+// function call. The statement form still yields a ModularCall named render.
+modular_render: RENDER "(" arguments ")" child_statement
+RENDER: "render"
 
 // --- Expressions ---
 // Precedence is encoded via explicit rule nesting (like the PEG grammar).
@@ -171,6 +178,7 @@ ternary_expr: logical_or "?" expr ":" expr
 
 ?primary: "(" expr ")"             -> paren_expr
     | range_expr
+    | render_expr
     | vector_expr
     | "undef"                       -> undef_literal
     | "true"                        -> true_literal
@@ -178,6 +186,11 @@ ternary_expr: logical_or "?" expr ":" expr
     | STRING
     | NUMBER
     | NAME
+
+// `obj = render() { cube(1); };` -- geometry measured as a value. In primary,
+// so `render() {...}.volume` parses; the braces are needed, since an unbraced
+// child statement swallows the assignment's `;`.
+render_expr: RENDER "(" arguments ")" child_statement
 
 // --- Range and Vector ---
 
@@ -210,7 +223,9 @@ listcomp_ifelse: "if" "(" expr ")" vector_element "else" vector_element
 
 NAME: /\$?[_A-Za-z][A-Za-z0-9_]*/
 NUMBER: /0x[0-9A-Fa-f]+|\d+([.]\d*)?([eE][+-]?\d+)?|[.]\d+([eE][+-]?\d+)?/
-STRING: /\"(?:[^\"\\]|\\.)*\"/
+// `\\[\s\S]`, not `\\.`: a backslash can escape a line ending too (OpenSCAD
+// accepts it). Escapes are kept verbatim; the evaluator resolves them.
+STRING: /\"(?:[^\"\\]|\\[\s\S])*\"/
 
 // --- Comments and Whitespace ---
 

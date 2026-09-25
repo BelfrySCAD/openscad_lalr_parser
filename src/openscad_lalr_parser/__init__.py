@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -44,6 +45,7 @@ from .nodes import (
     PositionalArgument,
     NamedArgument,
     RangeLiteral,
+    RenderExpression,
     Assignment,
     LetOp,
     EchoOp,
@@ -140,7 +142,7 @@ def _get_parser() -> Lark:
 _COMMENT_RE = re.compile(
     r'//([^\n]*)'           # single-line comment
     r'|/\*([\s\S]*?)\*/'    # multi-line comment
-    r'|"(?:[^"\\]|\\.)*"'   # string literal (skip)
+    r'|"(?:[^"\\]|\\[\s\S])*"'  # string literal (skip); a backslash may escape a newline
 )
 
 
@@ -646,13 +648,53 @@ def getASTfromString(code: str, include_comments: bool = False, origin: str = "<
     return ast
 
 
-def findLibraryFile(currfile: str, libfile: str) -> Optional[str]:
-    """Find a library file using OpenSCAD's search path rules.
+def _windows_documents_dir() -> str:
+    """Where Windows says My Documents is -- the same SHGetFolderPathW(
+    CSIDL_PERSONAL, SHGFP_TYPE_CURRENT) call OpenSCAD makes -- rather than
+    assuming ~/Documents: OneDrive's Known Folder Move, on by default, puts
+    it at ~/OneDrive/Documents instead."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:  # CSIDL_PERSONAL, SHGFP_TYPE_CURRENT
+            return buf.value
+    except (AttributeError, OSError):  # not actually on Windows
+        pass
+    return os.path.join(os.path.expanduser("~"), "Documents")
 
-    Searches for the library file in the following order:
-    1. Directory of the current file (if currfile is provided)
-    2. Directories specified in OPENSCADPATH environment variable
-    3. Platform-specific default library directories
+
+def librarySearchDirs(currfile: str) -> list[str]:
+    """The directories `include`/`use` search, in order, as OpenSCAD's
+    parser_init() builds them: the including file's own directory, then
+    every OPENSCADPATH entry, then the user's libraries folder.
+
+    OPENSCADPATH adds to the libraries folder rather than replacing it --
+    it used to replace it, so setting it for one library hid every other
+    one, a BOSL2 in the default folder included.
+    """
+    dirs = []
+    if currfile:
+        dirs.append(os.path.dirname(os.path.abspath(currfile)))
+
+    system = platform.system()
+    pathsep = ";" if system == "Windows" else ":"
+    for path in os.getenv("OPENSCADPATH", "").split(pathsep):
+        expanded_path = os.path.expandvars(path)
+        if expanded_path:
+            dirs.append(expanded_path)
+
+    if system == "Windows":
+        dirs.append(os.path.join(_windows_documents_dir(), "OpenSCAD", "libraries"))
+    elif system == "Darwin":
+        dirs.append(os.path.expanduser("~/Documents/OpenSCAD/libraries"))
+    elif system == "Linux":
+        dirs.append(os.path.expanduser("~/.local/share/OpenSCAD/libraries"))
+    return dirs
+
+
+def findLibraryFile(currfile: str, libfile: str) -> Optional[str]:
+    """Find a library file using OpenSCAD's search path rules: the first
+    directory in librarySearchDirs(currfile) that holds it.
 
     Args:
         currfile: Full path to the current OpenSCAD file (can be empty string).
@@ -661,36 +703,18 @@ def findLibraryFile(currfile: str, libfile: str) -> Optional[str]:
     Returns:
         Full path to the found library file, or None if not found.
     """
-    dirs = []
-
-    if currfile:
-        dirs.append(os.path.dirname(os.path.abspath(currfile)))
-
-    pathsep = ":"
-    dflt_path = ""
-    system = platform.system()
-
-    if system == "Windows":
-        dflt_path = os.path.join(os.path.expanduser("~"), "Documents", "OpenSCAD", "libraries")
-        pathsep = ";"
-    elif system == "Darwin":
-        dflt_path = os.path.expanduser("~/Documents/OpenSCAD/libraries")
-    elif system == "Linux":
-        dflt_path = os.path.expanduser("~/.local/share/OpenSCAD/libraries")
-
-    env = os.getenv("OPENSCADPATH", dflt_path)
-    if env:
-        for path in env.split(pathsep):
-            expanded_path = os.path.expandvars(path)
-            if expanded_path:
-                dirs.append(expanded_path)
-
-    for d in dirs:
+    for d in librarySearchDirs(currfile):
         test_file = os.path.join(d, libfile)
         if os.path.isfile(test_file):
             return test_file
-
     return None
+
+
+def _not_found(what: str, filename: str, currfile: str) -> str:
+    """A not-found message that lists every directory searched. Naming only
+    the includer read as "only there was searched"."""
+    return f"{what} '{filename}' not found. Searched:" + "".join(
+        f"\n  {d}" for d in librarySearchDirs(currfile))
 
 
 _find_library_file = findLibraryFile
@@ -727,11 +751,23 @@ def _get_disk_cache_dir() -> Optional[str]:
         return None
 
 
+@functools.lru_cache(maxsize=None)
+def _ast_format_tag() -> str:
+    """Changes whenever the grammar or the AST classes do, so a pickled AST
+    from another version is never served: an older pickle lacks any field
+    added since (RangeLiteral.implicit_step, say) and would raise on access."""
+    here = Path(__file__).parent
+    h = hashlib.sha256()
+    for name in ("grammar.lark", "nodes.py", "transformer.py", "__init__.py"):
+        h.update((here / name).read_bytes())
+    return h.hexdigest()[:16]
+
+
 def _disk_cache_path(file_path: str, include_comments: bool) -> Optional[str]:
     cache_dir = _get_disk_cache_dir()
     if not cache_dir:
         return None
-    key = f"{file_path}:{include_comments}"
+    key = f"{file_path}:{include_comments}:{_ast_format_tag()}"
     h = hashlib.sha256(key.encode()).hexdigest()[:16]
     return os.path.join(cache_dir, f"{h}.pickle")
 
@@ -886,10 +922,7 @@ def _resolve_includes(ast_nodes: list[ASTNode] | None, current_file: str,
             filename = node.filepath.val
             lib_file = findLibraryFile(current_file, filename)
             if lib_file is None:
-                raise FileNotFoundError(
-                    f"Included file '{filename}' not found. "
-                    f"Searched relative to: {current_file if current_file else 'current directory'}"
-                )
+                raise FileNotFoundError(_not_found("Included file", filename, current_file))
             lib_file = os.path.abspath(lib_file)
             if lib_file in visited:
                 continue
@@ -967,10 +1000,7 @@ def getASTfromLibraryFile(currfile: str, libfile: str, include_comments: bool = 
     found_file = findLibraryFile(currfile, libfile)
 
     if found_file is None:
-        raise FileNotFoundError(
-            f"Library file '{libfile}' not found in search paths. "
-            f"Searched in: current file directory, OPENSCADPATH, and platform default paths."
-        )
+        raise FileNotFoundError(_not_found("Library file", libfile, currfile))
 
     ast = getASTfromFile(found_file, include_comments=include_comments, process_includes=process_includes)
     return ast, os.path.abspath(found_file)
