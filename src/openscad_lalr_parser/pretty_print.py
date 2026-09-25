@@ -40,18 +40,22 @@ from .nodes import (
 def to_openscad(nodes: list[ASTNode], indent_width: int = 4) -> str:
     parts = []
     prev_complex = False
+    blanks = 0  # BlankLines seen since the last node printed
     for node in nodes:
         if _is_same_line_comment(node) and parts:
             parts[-1] += f"  {node}"
             continue
-        is_complex = isinstance(node, (ModuleDeclaration, FunctionDeclaration))
-        is_blank = isinstance(node, BlankLine)
-        if parts and prev_complex and not is_blank:
-            parts.append("")
-            parts.append("")
+        if isinstance(node, BlankLine):
+            blanks += 1
+            continue
+        # Two blank lines after a declaration, or the source's own if more.
+        # Adding the two to the source's (which a re-parse keeps as
+        # BlankLines) grew the gap by two on every reformat.
+        if parts:
+            parts.extend([""] * (max(blanks, 2) if prev_complex else blanks))
+        blanks = 0
         parts.append(_fmt_node(node, 0, indent_width))
-        if not is_blank:
-            prev_complex = is_complex
+        prev_complex = isinstance(node, (ModuleDeclaration, FunctionDeclaration))
     return _coalesce_paren_bracket("\n".join(parts))
 
 

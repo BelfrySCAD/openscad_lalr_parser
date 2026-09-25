@@ -144,3 +144,18 @@ class TestNoCommentLostOrMerged:
     ])
     def test_every_comment_survives(self, src):
         _reformat(src)
+
+
+class TestBlankLines:
+    """The two blank lines after a declaration used to be ADDED to the
+    source's own, which a re-parse keeps -- so every reformat grew the gap."""
+
+    @pytest.mark.parametrize("src, gap", [
+        ("function f() = 1;\n// c\nx = 2;\n", 2),           # the separator
+        ("function f() = 1;\n\n\n\n// c\nx = 2;\n", 3),     # the source's, when larger
+        ("x = 1;\n\n// c\ny = 2;\n", 1),                   # no declaration: the source's
+    ])
+    def test_gap_is_the_larger_not_the_sum(self, src, gap):
+        out = _reformat(src)  # which also checks a second reformat is identical
+        before_comment = out.split("// c")[0]
+        assert len(before_comment) - len(before_comment.rstrip("\n")) == gap + 1
