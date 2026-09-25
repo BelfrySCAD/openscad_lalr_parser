@@ -540,15 +540,15 @@ class TestCommentAttachment:
         # found "relevant" during _walk_attach's normal descent -- it's
         # picked up by _attach_inline_comments's fallback pass instead,
         # which walks _attach_trailing_to_last_expr.
+        # It ends the statement's line, so it follows the statement in the
+        # statement list, flagged same_line -- not wrapped round the call's
+        # last argument, which printed it before the `;`.
         code = "// standalone\ncube(1); // trailing\n"
         ast = getASTfromString(code, include_comments=True)
-        assert isinstance(ast[0], CommentLine)
-        call = ast[1]
-        assert isinstance(call, ModularCall)
-        arg_expr = call.arguments[0].expr
-        from openscad_lalr_parser.nodes import CommentedExpr
-        assert isinstance(arg_expr, CommentedExpr)
-        assert any("trailing" in str(c) for c in arg_expr.trailing_comments)
+        assert isinstance(ast[0], CommentLine) and not ast[0].same_line
+        assert isinstance(ast[1], ModularCall)
+        assert not hasattr(ast[1].arguments[0].expr, "trailing_comments")
+        assert isinstance(ast[2], CommentLine) and ast[2].same_line and ast[2].text == " trailing"
 
     def test_block_comment_with_no_preceding_code_but_trailing_code(self):
         # A CommentSpan with nothing before it on its own line is only

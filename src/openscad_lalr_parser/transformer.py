@@ -164,7 +164,16 @@ class OpenSCADTransformer(Transformer):
     # --- Top-level ---
 
     def start(self, meta, children):
-        return [c for c in children if c is not None]
+        # A top-level `{ ... }` block arrives as a list; flatten it, as nested
+        # blocks already are. Left in, the AST held a bare list, which crashed
+        # comment attachment and whose geometry an evaluator skipped.
+        result = []
+        for c in children:
+            if isinstance(c, list):
+                result.extend(c)
+            elif c is not None:
+                result.append(c)
+        return result
 
     def toplevel_statement(self, meta, children):
         return children[0]

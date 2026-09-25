@@ -12,20 +12,17 @@ in strings, argument-list line comments, `render()` expressions and the range st
   `resourcePath("libraries")`) are not searched; a pip-installed package has no such directory,
   so this only matters if something ever bundles this parser with libraries next to it
 
-## Comment round-trip (found while backporting, present on master)
+## Comment round-trip
 
-With `include_comments=True`, 60 of BOSL2's 92 files don't reformat to a stable result
-(`to_openscad` of the re-parse differs), measured 2026-09-24.
+Reformatting with `include_comments=True` now always gives code that parses and is the same
+program: on BOSL2, 91 of 92 files (the other is itself invalid), where 36 used to reformat into
+code that didn't parse and 5 more into a different program. What's left is cosmetic -- the
+program never changes, but on 58 files a second reformat differs from the first (measured
+2026-09-24):
 
-- A `//` comment at the end of a statement is attached to the statement's LAST EXPRESSION, and
-  printed before the terminator, commenting it out: `x = 1; // c` prints `x = 1 // c;`,
-  `x = f(1); // c` prints `x = f(1) // c;`. With a child module it lands on the child's NAME:
-  `translate(v) cube(1); // c` prints `cube // c(1);`, and so do `if (a) cube(1); // c`,
-  `for (...) cube(i); // c` and `module m() { cube(1); } // c`. The C++ port fixed the
-  terminator cases in its initial port (`appendTerminatorSafely`, text-based, so a `"//"` in a
-  string misfires) and has tests for them. A root fix attaches end-of-statement comments to the
-  statement rather than an expression
-- Standalone comments are only injected at top level: one inside a block or argument list
-  (`foo(\n    // lead\n    a, b);`) is moved out to after the statement
-- `rprism11.scad` crashes attachment: `_inject_comments` meets a top-level node that is a list
-  (`AttributeError: 'list' object has no attribute 'position'`)
+- Standalone comments are only injected at top level: one on its own line inside a block,
+  argument list or list comprehension (`foo(\n    // lead\n    a, b);`) moves out to after the
+  statement on the next reformat. Statement-trailing and `{`-line comments are placed in nested
+  blocks now (`_place_statement_comment`); the same placement could take own-line comments
+- Blank lines grow by two per reformat after a function/module declaration followed by a
+  comment: `to_openscad` adds two, and the re-parse keeps them as `BlankLine`s
