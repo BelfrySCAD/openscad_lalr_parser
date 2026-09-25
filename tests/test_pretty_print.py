@@ -1009,16 +1009,12 @@ class TestTernaryEdgeCases:
 
     def test_comment_before_nested_false_branch_ternary(self):
         # An inline comment sitting right before a chained ternary's next
-        # link wraps that link in a CommentedExpr; _fmt_ternary_chain must
-        # see through that wrapper (node = node.expr) to keep following the
-        # chain instead of stopping early and re-rendering it as a nested
-        # (indented) ternary. Note: seeing through the wrapper this way
-        # means the comment itself is dropped from the formatted output --
-        # a real, if minor, existing quirk this test documents rather than
-        # papers over.
+        # link wraps that link in a CommentedExpr; _fmt_ternary_chain sees
+        # through the wrapper (node = node.expr) to keep following the chain
+        # instead of re-rendering it as a nested (indented) ternary -- and
+        # keeps the comment, before that link's condition. It used to drop it.
         out = _fmt_with_comments("x = c1 ? a : /* mid */ c2 ? b : d;")
-        assert "/* mid */" not in out
-        assert out == "x = c1 ?\n    a\n: c2 ?\n    b\n: d;"
+        assert ": /* mid */ c2 ?" in out
 
 
 # --- Coverage gap-fill: binary op with a multiline list operand -----------
@@ -1101,16 +1097,14 @@ class TestFmtInstFallback:
     def test_unhandled_node_type_falls_back_to_str(self):
         # Same story as TestFmtNodeFallback, for _fmt_inst's own catch-all:
         # every real ModuleInstantiation subclass (call/for/intersection_for/
-        # let/echo/assert/if/if-else/the 4 modifiers) plus Assignment is
-        # handled explicitly; BlankLine never legitimately reaches _fmt_inst
-        # through real parsing (a standalone blank line/comment inside a
-        # control-flow body attaches to a sibling expression instead, per
-        # _attach_inline_comments -- see test_ast_convenience.py).
-        from openscad_lalr_parser.nodes import BlankLine, Position
+        # let/echo/assert/if/if-else/the 4 modifiers) plus Assignment and the
+        # comment nodes a nested block can hold is handled explicitly; a
+        # ParameterDeclaration never reaches _fmt_inst through real parsing.
+        from openscad_lalr_parser.nodes import Identifier, ParameterDeclaration, Position
         from openscad_lalr_parser.pretty_print import _fmt_inst
         pos = Position(origin="<test>", line=1, column=1, start_offset=0, end_offset=0)
-        node = BlankLine(position=pos)
-        assert _fmt_inst(node, 4, 4) == "    ;"
+        node = ParameterDeclaration(position=pos, name=Identifier(position=pos, name="x"), default=None)
+        assert _fmt_inst(node, 4, 4) == "    x;"
 
 
 class TestFmtArgumentFallback:
