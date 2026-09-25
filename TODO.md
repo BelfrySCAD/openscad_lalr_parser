@@ -5,9 +5,6 @@
 Triaged 2026-09-24 against cpp 33a78ca..9524bdc. `#N` are cpp PRs. Library search, backslash-newline
 in strings, argument-list line comments, `render()` expressions and the range step flag are done.
 
-- Strict-commas mode (#9), optional: reject the trailing commas 2021.01 rejected (call arguments
-  and let/for/intersection_for assignments), keep them in list literals, list comprehensions and
-  parameter declarations. Part of the parse cache key
 - Libraries shipped beside the binary (#10's third search dir, OpenSCAD's
   `resourcePath("libraries")`) are not searched; a pip-installed package has no such directory,
   so this only matters if something ever bundles this parser with libraries next to it
