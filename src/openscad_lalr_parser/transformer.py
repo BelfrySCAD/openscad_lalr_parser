@@ -15,6 +15,7 @@ from .nodes import (
     PositionalArgument,
     NamedArgument,
     RangeLiteral,
+    RenderExpression,
     Assignment,
     LetOp,
     EchoOp,
@@ -353,6 +354,13 @@ class OpenSCADTransformer(Transformer):
             body = [body] if body is not None else []
         return ModularEcho(arguments=arguments, children=body, position=self._pos(meta))
 
+    def render_expr(self, meta, children):
+        call = self.modular_call(meta, children)
+        return RenderExpression(arguments=call.arguments, children=call.children, position=call.position)
+
+    def RENDER(self, token: Token) -> Identifier:
+        return Identifier(name="render", position=self._tpos(token))
+
     def modular_call(self, meta, children):
         name = children[0]
         arguments = children[1] if len(children) > 1 and isinstance(children[1], list) else []
@@ -366,6 +374,9 @@ class OpenSCADTransformer(Transformer):
             children=body,
             position=self._pos(meta),
         )
+
+
+    modular_render = modular_call  # the RENDER token arrives as Identifier("render")
 
     # --- Expressions ---
 
@@ -498,7 +509,8 @@ class OpenSCADTransformer(Transformer):
         else:
             end = children[1]
             step = NumberLiteral(val=1.0, position=self._pos(meta))
-        return RangeLiteral(start=start, end=end, step=step, position=self._pos(meta))
+        return RangeLiteral(start=start, end=end, step=step, implicit_step=len(children) != 3,
+                            position=self._pos(meta))
 
     def vector_expr(self, meta, children):
         if children and isinstance(children[0], list):

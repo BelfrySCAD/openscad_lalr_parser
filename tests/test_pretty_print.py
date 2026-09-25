@@ -492,7 +492,7 @@ class TestLetEchoAssertFormatting:
 class TestListCompForFormatting:
     def test_short_for_expands(self):
         out = _fmt("x = [for (i = [0:3]) i];")
-        assert out == "x = [\n        for (i = [0 : 1 : 3])\n            i\n    ];"
+        assert out == "x = [\n        for (i = [0 : 3])\n            i\n    ];"
 
     def test_long_for_body_on_new_line(self):
         out = _fmt("x = [for (long_variable_name = [start_value:step_value:end_value]) long_variable_name * scaling_factor_x];")
@@ -502,7 +502,7 @@ class TestListCompForFormatting:
     def test_long_for_assignments_multiline(self):
         out = _fmt("x = [for (very_long_variable_name_alpha = [start_value:end_value], very_long_variable_name_beta = [0:10]) very_long_variable_name_alpha];")
         assert "for (\n" in out
-        assert "            very_long_variable_name_alpha = [start_value : 1 : end_value]," in out
+        assert "            very_long_variable_name_alpha = [start_value : end_value]," in out
         assert ")\n" in out
 
     def test_nested_for(self):
@@ -969,7 +969,7 @@ class TestNestedListComprehensionElement:
     def test_each_wraps_a_list_comprehension(self):
         out = _fmt("x = [each [for (i = [1:3]) i]];")
         assert "each" in out
-        assert "for (i = [1 : 1 : 3])" in out
+        assert "for (i = [1 : 3])" in out
 
 
 class TestListCompIfFormatting:
@@ -1046,8 +1046,10 @@ class TestLineCommentAttachment:
         code = ("foo(alpha_value_number_one // note\n"
                 ", beta_value_number_two, gamma_value_number_three, delta_value_number_four);")
         out = _fmt_with_comments(code)
-        assert "// note" in out
-        assert "alpha_value_number_one,\n" in out
+        # moved to the end of the line before, after the comma: on a line of
+        # its own it would re-parse as a standalone comment
+        assert "alpha_value_number_one,  // note\n" in out
+        assert _fmt_with_comments(out) == out
 
     def test_comment_before_middle_list_element(self):
         code = "x = [very_long_element_name_a, b // note\n, very_long_element_name_c, very_long_element_name_d];"
@@ -1130,7 +1132,7 @@ class TestModularForMultilineFormatting:
         code = "for (very_long_variable_name_alpha = [0:100], very_long_variable_name_beta = [0:50]) cube(1);"
         out = _fmt(code)
         assert out.startswith("for (\n")
-        assert "very_long_variable_name_alpha = [0 : 1 : 100],\n" in out
+        assert "very_long_variable_name_alpha = [0 : 100],\n" in out
 
 
 class TestModularIntersectionForMultilineFormatting:
@@ -1138,7 +1140,7 @@ class TestModularIntersectionForMultilineFormatting:
         code = "intersection_for (very_long_variable_name_alpha = [0:100], very_long_variable_name_beta = [0:50]) cube(1);"
         out = _fmt(code)
         assert out.startswith("intersection_for (\n")
-        assert "very_long_variable_name_alpha = [0 : 1 : 100],\n" in out
+        assert "very_long_variable_name_alpha = [0 : 100],\n" in out
 
 
 class TestModularLetMultiAssignmentFormatting:

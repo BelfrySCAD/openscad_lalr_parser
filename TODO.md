@@ -2,27 +2,30 @@
 
 ## Backports from openscad_cpp_parser
 
-Triaged 2026-09-24 against cpp 33a78ca..9524bdc. `#N` are cpp PRs.
+Triaged 2026-09-24 against cpp 33a78ca..9524bdc. `#N` are cpp PRs. Library search, backslash-newline
+in strings, argument-list line comments, `render()` expressions and the range step flag are done.
 
-- Library search (#10), `findLibraryFile` in `__init__.py`: `OPENSCADPATH` replaces the default
-  libraries folder instead of being searched before it; Windows hard-codes
-  `~\Documents` (wrong under OneDrive Known Folder Move, use `SHGetFolderPathW(CSIDL_PERSONAL)`);
-  libraries beside the binary are never searched. The not-found error should list every
-  directory tried
-- Backslash-newline inside a string (#4): `x = "a\` + newline + `b";` is a syntax error here.
-  OpenSCAD accepts it (warns "Undefined escape sequence", echoes `"ab"`). Keep both characters
-  verbatim in the literal; escapes are resolved by the evaluator
-- Comment round-trip in multi-line args (89114d9): `foo(a // one\n, b // two\n, c);` pretty-prints
-  as `foo(a, // one b, // two c);`, which comments out the rest and no longer parses. Move a
-  leading `//` onto the previous argument's line
-- `render()` in expression position (#5): `render` becomes a reserved keyword and
-  `obj = render() { ... };` gets its own node; the statement form stays a ModularCall
-- RangeLiteral records whether the step was written (#6): `[5:0]` and `[5:1:0]` give identical
-  ASTs and `str()` prints the synthesized step. The evaluator needs the flag for its
-  backwards-range warning, and printing must reproduce the written form
 - Strict-commas mode (#9), optional: reject the trailing commas 2021.01 rejected (call arguments
   and let/for/intersection_for assignments), keep them in list literals, list comprehensions and
   parameter declarations. Part of the parse cache key
+- Libraries shipped beside the binary (#10's third search dir, OpenSCAD's
+  `resourcePath("libraries")`) are not searched; a pip-installed package has no such directory,
+  so this only matters if something ever bundles this parser with libraries next to it
 
-Not needed: string spans (#3) are already right here; declaration signature comments already
-ported (e6d72a6); #7/#8 shared parse cache and scope table are C++-structural.
+## Comment round-trip (found while backporting, present on master)
+
+With `include_comments=True`, 60 of BOSL2's 92 files don't reformat to a stable result
+(`to_openscad` of the re-parse differs), measured 2026-09-24.
+
+- A `//` comment at the end of a statement is attached to the statement's LAST EXPRESSION, and
+  printed before the terminator, commenting it out: `x = 1; // c` prints `x = 1 // c;`,
+  `x = f(1); // c` prints `x = f(1) // c;`. With a child module it lands on the child's NAME:
+  `translate(v) cube(1); // c` prints `cube // c(1);`, and so do `if (a) cube(1); // c`,
+  `for (...) cube(i); // c` and `module m() { cube(1); } // c`. The C++ port fixed the
+  terminator cases in its initial port (`appendTerminatorSafely`, text-based, so a `"//"` in a
+  string misfires) and has tests for them. A root fix attaches end-of-statement comments to the
+  statement rather than an expression
+- Standalone comments are only injected at top level: one inside a block or argument list
+  (`foo(\n    // lead\n    a, b);`) is moved out to after the statement
+- `rprism11.scad` crashes attachment: `_inject_comments` meets a top-level node that is a list
+  (`AttributeError: 'list' object has no attribute 'position'`)

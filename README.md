@@ -174,6 +174,7 @@ openscad-lalr --no-includes model.scad
 | `getASTfromLibraryFile(currfile, libfile, ...)` | Find and parse a library file using OpenSCAD's search path rules. |
 | `parse_ast(code, origin="<string>")` | Low-level parse returning AST nodes (no comment processing). |
 | `findLibraryFile(currfile, libfile)` | Find a library file path without parsing it. |
+| `librarySearchDirs(currfile)` | The directories searched, in order: the including file's, each `OPENSCADPATH` entry, then the user's OpenSCAD libraries folder (as OpenSCAD orders them). |
 | `clear_ast_cache()` | Clear the in-memory and on-disk AST caches. |
 
 ### Serialization Functions
@@ -199,11 +200,17 @@ openscad-lalr --no-includes model.scad
 
 All AST nodes inherit from `ASTNode`. The main categories are:
 
-**Literals**: `Identifier`, `StringLiteral`, `NumberLiteral`, `BooleanLiteral`, `UndefinedLiteral`, `RangeLiteral`
+**Literals**: `Identifier`, `StringLiteral`, `NumberLiteral`, `BooleanLiteral`, `UndefinedLiteral`, `RangeLiteral` (its `implicit_step` is true for `[a:b]`, whose step node is a synthesized 1)
 
 **Operators**: `AdditionOp`, `SubtractionOp`, `MultiplicationOp`, `DivisionOp`, `ModuloOp`, `ExponentOp`, `UnaryMinusOp`, `LogicalAndOp`, `LogicalOrOp`, `LogicalNotOp`, `BitwiseAndOp`, `BitwiseOrOp`, `BitwiseNotOp`, `BitwiseShiftLeftOp`, `BitwiseShiftRightOp`, `EqualityOp`, `InequalityOp`, `GreaterThanOp`, `GreaterThanOrEqualOp`, `LessThanOp`, `LessThanOrEqualOp`, `TernaryOp`
 
-**Expressions**: `PrimaryCall`, `PrimaryIndex`, `PrimaryMember`, `LetOp`, `EchoOp`, `AssertOp`, `FunctionLiteral`, `ListComprehension`
+**Expressions**: `PrimaryCall`, `PrimaryIndex`, `PrimaryMember`, `LetOp`, `EchoOp`, `AssertOp`, `FunctionLiteral`, `ListComprehension`, `RenderExpression`
+
+`RenderExpression` is `render()` in expression position, `obj = render() { cube(1); };`, a
+language extension of openscad_cpp_evaluator/BelfrySCAD: its children's geometry as a value. The
+braces are required. To make it parseable, `render` is a reserved word wherever an expression can
+start, so it can't be a variable or an argument name; `render() cube(1);` as a statement is still a
+`ModularCall`.
 
 **List Comprehensions**: `ListCompFor`, `ListCompCFor`, `ListCompIf`, `ListCompIfElse`, `ListCompLet`, `ListCompEach`
 
