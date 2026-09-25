@@ -208,62 +208,86 @@ _SKIP_FIELDS = frozenset(('position', 'scope', 'leading_comments', 'trailing_com
 
 _STATEMENT_LIST_FIELDS = ("children", "body", "true_branch", "false_branch")
 _STATEMENT_TYPES = (ModuleInstantiation, ModuleDeclaration, FunctionDeclaration)
+# What an inline comment can wrap: expressions, and list-comprehension
+# elements (`each`, `if`, `for` ...), which aren't Expressions -- with only
+# those between them, a comment had nothing to attach to and was dropped.
+_ATTACHABLE = (Expression, VectorElement)
 
 
-def _place_statement_comment(stmts: list, comment: CommentLine, code: str) -> bool:
-    """Put `comment` into the statement list where it falls BETWEEN statements
-    (after the one it follows), descending into nested blocks. False when it
-    falls inside a statement's non-block part -- an argument list, a
-    condition -- where expression attachment handles it."""
+def _blank_comments(code: str, comments: list) -> str:
+    """`code` with every comment replaced by spaces (newlines kept), so
+    looking back past comments for the previous real character is easy."""
+    chars = list(code)
+    for c in comments:
+        for i in range(c.position.start_offset, c.position.end_offset):
+            if chars[i] != "\n":
+                chars[i] = " "
+    return "".join(chars)
+
+
+def _place_comment(stmts: list, comment, blanked: str, same_line: bool, top: bool = False) -> str:
+    """Put `comment` into the statement list where it falls between
+    statements, descending into nested blocks. Returns "placed", "head"
+    (inside a statement's non-block part -- arguments, a condition -- where
+    expression attachment takes it) or "top" (an own-line comment between
+    top-level statements, which _inject_comments places with its blank
+    lines)."""
     cs = comment.position.start_offset
-    last_before = None
-    for i, node in enumerate(stmts):
+    for node in stmts:
         if isinstance(node, (CommentLine, CommentSpan, BlankLine)):
             continue
         pos = node.position
         if pos.start_offset <= cs < pos.end_offset:
-            return _place_in_statement(node, comment, code)
-        if pos.end_offset <= cs:
-            last_before = i
-    if last_before is None:
-        return False
-    j = last_before + 1
-    while j < len(stmts) and isinstance(stmts[j], CommentLine) and stmts[j].same_line:
-        j += 1  # after comments already placed there
-    comment.same_line = True
-    stmts.insert(j, comment)
-    return True
+            return _place_in_statement(node, comment, blanked, same_line)
+    if top and not same_line:
+        return "top"
+    index = sum(1 for n in stmts if n.position.start_offset < cs)  # comments come in source order
+    if index == 0 and top:
+        return "head"
+    if isinstance(comment, CommentLine):
+        comment.same_line = same_line
+    stmts.insert(index, comment)
+    return "placed"
 
 
-def _place_in_statement(node, comment: CommentLine, code: str) -> bool:
+def _place_in_statement(node, comment, blanked: str, same_line: bool) -> str:
     child = getattr(node, "child", None)  # the #/%/!/* modifiers wrap one statement
     if isinstance(child, ASTNode):
-        return _place_in_statement(child, comment, code)
+        return _place_in_statement(child, comment, blanked, same_line)
     # The block the comment is in: the last one starting before it (an if/else
-    # has two). None means it sits before every block, in the statement's head.
+    # has two). Failing that, the next block if only its `{` comes between
+    # (`module m() { // why`, or an own-line comment atop the block).
     cs = comment.position.start_offset
     block = next_block = None
     for name in _STATEMENT_LIST_FIELDS:
         stmts = getattr(node, name, None)
-        if isinstance(stmts, list) and stmts and isinstance(stmts[0], ASTNode):
-            if stmts[0].position.start_offset <= cs:
-                block = stmts
-            elif next_block is None:
-                next_block = stmts
-    if block is not None:
-        return _place_statement_comment(block, comment, code)
-    if next_block is not None and code[:cs].rstrip().endswith("{"):
-        # `module m() { // why` -- it ends the block's opening line
-        comment.same_line = True
-        next_block.insert(0, comment)
-        return True
-    return False
+        if not isinstance(stmts, list):
+            continue
+        # By its first STATEMENT: a comment placed there already may come first.
+        first = next((n for n in stmts if isinstance(n, ASTNode)
+                      and not isinstance(n, (CommentLine, CommentSpan, BlankLine))), None)
+        if first is None:
+            continue
+        if first.position.start_offset <= cs:
+            block = stmts
+        elif next_block is None:
+            next_block = stmts
+    inside_block = block is not None and any(
+        n.position.start_offset <= cs < n.position.end_offset
+        for n in block if not isinstance(n, (CommentLine, CommentSpan, BlankLine)))
+    if not inside_block and next_block is not None and blanked[:cs].rstrip().endswith("{"):
+        block = next_block  # atop a block: an else's, even with the if's block before it
+    if block is None:
+        return "head"
+    return _place_comment(block, comment, blanked, same_line)
 
 
 def _attach_inline_comments(ast_nodes: list[ASTNode], inline_comments: list[ASTNode]) -> list[ASTNode]:
+    """Returns the comments it found no place for, for the caller to keep as
+    top-level ones: dropping them lost the text."""
     """Walk AST and wrap expressions adjacent to inline comments in CommentedExpr."""
     if not inline_comments:
-        return ast_nodes
+        return []
     inline_comments.sort(key=lambda c: c.position.start_offset)
     used: set[int] = set()
     for node in ast_nodes:
@@ -285,7 +309,7 @@ def _attach_inline_comments(ast_nodes: list[ASTNode], inline_comments: list[ASTN
             _attach_trailing_to_last_expr(best_node, comment)
             used.add(ci)
 
-    return ast_nodes
+    return [c for ci, c in enumerate(inline_comments) if ci not in used]
 
 
 def _attach_trailing_to_last_expr(node: ASTNode, comment: ASTNode):
@@ -363,19 +387,21 @@ def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
         if f.name == "step" and getattr(node, "implicit_step", False):
             continue  # synthesized for [a:b]; it spans the whole range and would swallow its comments
         val = getattr(node, f.name)
-        if isinstance(val, Expression) and not isinstance(val, CommentedExpr):
+        if isinstance(val, _ATTACHABLE) and not isinstance(val, CommentedExpr):
             expr_fields.append((node, f.name, None, val))
         elif isinstance(val, ASTNode):
             non_expr_children.append(val)
         elif isinstance(val, list):
             for idx, item in enumerate(val):
-                if isinstance(item, Expression) and not isinstance(item, CommentedExpr):
+                if isinstance(item, _ATTACHABLE) and not isinstance(item, CommentedExpr):
                     expr_fields.append((node, f.name, idx, item))
-                elif isinstance(item, _STATEMENT_TYPES):
-                    # A child statement: its own walk attaches its comments.
-                    # Mined here, its NAME became one of this node's
-                    # expressions, and a comment in this node's arguments
-                    # landed on it (`translate([1, // c` ... `cube // c(1);`).
+                elif isinstance(item, _STATEMENT_TYPES) or (f.name in _STATEMENT_LIST_FIELDS and isinstance(item, ASTNode)):
+                    # A child statement (an assignment in a block too): its
+                    # own walk attaches its comments. Mined here, its NAME
+                    # became one of this node's expressions, and a comment in
+                    # this node's arguments landed on it (`translate([1, // c`
+                    # ... `cube // c(1);`, or a last parameter's comment on
+                    # the body's first assignment).
                     non_expr_children.append(item)
                 elif isinstance(item, ASTNode):
                     _collect_container_exprs(item, expr_fields, non_expr_children)
@@ -385,12 +411,15 @@ def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
     leading_map: dict[int, list] = {ei: [] for ei in range(len(expr_fields))}
     trailing_map: dict[int, list] = {ei: [] for ei in range(len(expr_fields))}
 
+    child_spans = [(c.position.start_offset, c.position.end_offset) for c in non_expr_children]
     for ci, comment in enumerate(comments):
         if ci in used:
             continue
         cs = comment.position.start_offset
         if cs < ns or cs >= ne:
             continue
+        if any(s <= cs < e for s, e in child_spans):
+            continue  # inside a child statement: its own walk places it
 
         attached = False
         for ei, (owner, fname, lidx, expr) in enumerate(expr_fields):
@@ -587,16 +616,29 @@ def _attach_all_comments(ast: list[ASTNode], code: str, origin: str) -> list[AST
     pipeline over whatever's left.
     """
     comments = _extract_comments(code, origin)
+    blanked = _blank_comments(code, comments)
     _attach_declaration_comments(ast, code, comments)
     comments = [c for c in comments if c is not None]
     inline, standalone = _classify_comments(comments, code)
-    # A `//` comment ending a statement's line belongs to the statement list,
-    # after that statement -- not wrapped round the statement's last
-    # expression, which printed it before the `;` (`x = 1 // c;`) or, with a
-    # child module, after the child's NAME (`cube // c(1);`).
-    inline = [c for c in inline if not (isinstance(c, CommentLine) and _place_statement_comment(ast, c, code))]
-    _attach_inline_comments(ast, inline)
-    return _inject_comments(ast, standalone, code, origin)
+    # Comments that sit between statements belong in the statement list, at
+    # any depth: a `//` ending a statement's line after that statement (it
+    # was wrapped round the statement's last expression and printed before
+    # the `;`, or after a child module's NAME), an own-line one where it is
+    # (it was moved out to top level, after the whole statement). Inside a
+    # statement's arguments or condition, expression attachment takes it.
+    expr_comments, top_level = [], []
+    for c in inline:
+        if not (isinstance(c, CommentLine) and _place_comment(ast, c, blanked, True, top=True) == "placed"):
+            expr_comments.append(c)
+    for c in standalone:
+        where = _place_comment(ast, c, blanked, False, top=True)
+        if where == "top":
+            top_level.append(c)
+        elif where == "head":
+            expr_comments.append(c)
+    top_level += _attach_inline_comments(ast, expr_comments)
+    top_level.sort(key=lambda c: c.position.start_offset)
+    return _inject_comments(ast, top_level, code, origin)
 
 
 def _inject_comments(ast_nodes: list[ASTNode], comments: list[ASTNode], code: str, origin: str) -> list[ASTNode]:

@@ -14,15 +14,13 @@ in strings, argument-list line comments, `render()` expressions and the range st
 
 ## Comment round-trip
 
-Reformatting with `include_comments=True` now always gives code that parses and is the same
-program: on BOSL2, 91 of 92 files (the other is itself invalid), where 36 used to reformat into
-code that didn't parse and 5 more into a different program. What's left is cosmetic -- the
-program never changes, but on 58 files a second reformat differs from the first (measured
-2026-09-24):
+Reformatting with `include_comments=True` gives code that parses, is the same program, and keeps
+every comment where it was: on BOSL2, 91 of 92 files (the other is itself invalid) and all
+45,635 of their comments, measured 2026-09-24. What's left is cosmetic:
 
-- Standalone comments are only injected at top level: one on its own line inside a block,
-  argument list or list comprehension (`foo(\n    // lead\n    a, b);`) moves out to after the
-  statement on the next reformat. Statement-trailing and `{`-line comments are placed in nested
-  blocks now (`_place_statement_comment`); the same placement could take own-line comments
 - Blank lines grow by two per reformat after a function/module declaration followed by a
-  comment: `to_openscad` adds two, and the re-parse keeps them as `BlankLine`s
+  comment: `to_openscad` adds two, and the re-parse keeps them as `BlankLine`s. It is why 55
+  of those files don't reformat to exactly the same text twice
+- Comments now appear inside nested statement lists (`children`, `body`, `true_branch`, ...)
+  when parsing with `include_comments=True`, not only at top level; a consumer counting a
+  block's statements (as `$children` does) must skip them

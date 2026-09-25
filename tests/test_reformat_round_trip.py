@@ -4,7 +4,7 @@ Measured on BOSL2 (92 files) before these fixes: 36 reformatted into code that
 no longer parsed, 5 more into a different program."""
 import pytest
 
-from openscad_lalr_parser import CommentLine, ast_to_dict, getASTfromString
+from openscad_lalr_parser import CommentLine, _extract_comments, ast_to_dict, getASTfromString
 from openscad_lalr_parser.pretty_print import to_openscad
 
 
@@ -12,10 +12,15 @@ def _program(src):
     return ast_to_dict(getASTfromString(src), include_position=False)
 
 
+def _comments(src):
+    return sorted(c.text.strip() for c in _extract_comments(src, "x"))
+
+
 def _reformat(src):
     out = to_openscad(getASTfromString(src, include_comments=True))
     assert getASTfromString(out) is not None, f"reformat does not parse:\n{out}"
     assert _program(out) == _program(src), f"reformat changed the program:\n{out}"
+    assert _comments(out) == _comments(src), f"reformat lost or merged comments:\n{out}"
     assert to_openscad(getASTfromString(out, include_comments=True)) == out  # stable
     return out
 
@@ -100,3 +105,42 @@ def test_top_level_block_is_flattened():
     ast = getASTfromString("x = 1;\n{ cube(1); sphere(1); }\n", include_comments=True)
     assert [type(n).__name__ for n in ast] == ["Assignment", "ModularCall", "ModularCall"]
     assert not any(isinstance(n, list) for n in ast)
+
+
+class TestOwnLineCommentsStayInTheirBlock:
+    """An own-line comment inside a block used to be moved out to top level,
+    after the whole statement."""
+
+    @pytest.mark.parametrize("src, expected", [
+        ("module m() {\n  // explain\n  cube(1);\n}\n",
+         "module m() {\n    // explain\n    cube(1);\n}"),
+        ("module m() {\n  cube(1);\n  // between\n  sphere(1);\n  // at end\n}\n",
+         "module m() {\n    cube(1);\n    // between\n    sphere(1);\n    // at end\n}"),
+        ("translate([1,0,0]) {\n  // a\n  // b\n  cube(1);\n}\n",
+         "translate([1, 0, 0]) {\n    // a\n    // b\n    cube(1);\n}"),
+        ("if (a) {\n  // why\n  cube(1);\n} else {\n  /* block */\n  sphere(1);\n}\n",
+         "if (a) {\n    // why\n    cube(1);\n} else {\n    /* block */\n    sphere(1);\n}"),
+        ("if (a) {\n  if (b) {\n    // inner\n    cube(1);\n  }\n} else {  // else\n  sphere(1);\n}\n",
+         "if (a) {\n    if (b) {\n        // inner\n        cube(1);\n    }\n} else {  // else\n    sphere(1);\n}"),
+    ])
+    def test_placed_where_it_was(self, src, expected):
+        assert _reformat(src) == expected
+
+    def test_inside_arguments_it_attaches_to_the_argument(self):
+        assert _reformat("x = f(\n  // lead\n  a, b);\n") == "x = f(\n    // lead\n    a,\n    b\n);"
+
+
+class TestNoCommentLostOrMerged:
+    """Each of these lost a comment or joined two into one."""
+
+    @pytest.mark.parametrize("src", [
+        "x = [\n  each if (a) f(1),   // first\n  each if (b) f(2)  // second\n];\n",
+        "x = let(\n  // one\n  // two\n  a = 1\n) a;\n",
+        "f(a,\n  // one\n  // two\n  b);\n",
+        "x = s == 0 ? [1] :  // why\n  t == 1 ? [2] : [3];\n",
+        "x = c1 ? a : /* mid */ c2 ? b : d;\n",
+        "module m(p = 1) {\n  function f(\n    a,  // one\n    b   // two\n  ) = a;\n}\n",
+        "module m(\n  a=1,  // first\n  h, height  // last\n) {\n  dummy = 1;\n}\n",  # landed on dummy
+    ])
+    def test_every_comment_survives(self, src):
+        _reformat(src)

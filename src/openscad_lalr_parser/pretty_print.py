@@ -25,6 +25,7 @@ from .nodes import (
     RenderExpression,
     RangeLiteral,
     ListComprehension,
+    VectorElement,
     ListCompFor,
     ListCompCFor,
     ListCompLet,
@@ -103,6 +104,9 @@ def _join_str(items) -> str:
 def _fmt_list_elem(elem, indent: int, w: int) -> str:
     pad = " " * indent
     inner_pad = " " * (indent + w)
+    if isinstance(elem, CommentedExpr) and isinstance(elem.expr, VectorElement):
+        lead = "".join(f"{c}\n{pad}" if isinstance(c, CommentLine) else f"{c} " for c in elem.leading_comments)
+        return lead + _fmt_list_elem(elem.expr, indent, w) + _fmt_trailing_comments(elem.trailing_comments, pad)
     if isinstance(elem, ListCompFor):
         formatted, joined = _fmt_assigns(elem.assignments, indent + w, w, inner_pad)
         body = _fmt_list_elem(elem.body, indent + w, w)
@@ -164,7 +168,21 @@ def _fmt_list_elem(elem, indent: int, w: int) -> str:
     if isinstance(elem, ListCompEach):
         body = _fmt_list_elem(elem.body, indent, w)
         return f"each {body}"
-    return str(elem)
+    return _fmt_expr(elem, indent, w)  # which indents what follows a comment
+
+
+def _add_item_lines(lines: list, text: str, lead: list, trail: list, inner_pad: str) -> None:
+    """Append one list item (argument, parameter, assignment, element),
+    `text` already carrying its comma, with its `//` comments: the first one
+    before it at the end of the previous line (after that item's comma), the
+    first one after it at the end of its own, and any others on lines of
+    their own -- joined onto one line, two comments became one."""
+    if lead and len(lines) > 1:
+        lines[-1] += f"  {lead[0]}"
+        lead = lead[1:]
+    lines.extend(f"{inner_pad}{c}" for c in lead)
+    lines.append(f"{inner_pad}{text}" + (f"  {trail[0]}" if trail else ""))
+    lines.extend(f"{inner_pad}{c}" for c in trail[1:])
 
 
 def _strip_line_comments(expr):
@@ -229,12 +247,7 @@ def _fmt_multiline_args(head: str, args: list, indent: int, w: int, fmt_fn=str) 
     lines = [f"{head}("]
     for i, arg in enumerate(args):
         lead, trail, arg = _pop_line_comments(arg)
-        if lead:
-            lines[-1] += "  " + "  ".join(str(c) for c in lead)
-        line = f"{inner_pad}{fmt_fn(arg)}{',' if i < len(args) - 1 else ''}"
-        if trail:
-            line += "  " + "  ".join(str(c) for c in trail)
-        lines.append(line)
+        _add_item_lines(lines, f"{fmt_fn(arg)}{',' if i < len(args) - 1 else ''}", lead, trail, inner_pad)
     return "\n".join(lines) + f"\n{pad})"
 
 
@@ -251,18 +264,12 @@ def _fmt_assigns(assignments, indent: int, w: int, inner_pad: str) -> tuple[list
     for a in _as_list(assignments):
         lead, trail, a = _pop_line_comments(a)
         items.append([_fmt_assign(a, indent, w), lead, trail])
-    lines = []
+    lines = [""]  # stands for the opening line, which callers write themselves
     for i, (text, lead, trail) in enumerate(items):
-        if lead and not lines:
-            lines.append("  ".join(str(c) for c in lead))  # first: on its own line
-        line = text + ("," if i < len(items) - 1 else "")
-        after = trail + (items[i + 1][1] if i + 1 < len(items) else [])
-        if after:
-            line += "  " + "  ".join(str(c) for c in after)
-        lines.append(line)
+        _add_item_lines(lines, text + ("," if i < len(items) - 1 else ""), lead, trail, inner_pad)
     has_comment = any(lead or trail for _, lead, trail in items)
     formatted = [t + ("\n" if has_comment else "") for t, _, _ in items]
-    return formatted, ("\n" + inner_pad).join(lines)
+    return formatted, "\n".join(lines[1:])[len(inner_pad):]
 
 
 def _fmt_argument(arg, indent: int, w: int) -> str:
@@ -278,16 +285,22 @@ def _fmt_ternary_chain(expr: TernaryOp, indent: int, w: int) -> str:
     inner_pad = " " * (indent + w)
     parts = []
     node = expr
+    comments: list = []  # on an else-branch that is itself a ternary
     while isinstance(node, TernaryOp):
-        parts.append((node.condition, node.true_expr))
+        parts.append((node.condition, node.true_expr, comments))
         node = node.false_expr
+        comments = []
         if isinstance(node, CommentedExpr) and isinstance(node.expr, TernaryOp):
+            # Unwrapped to continue the chain -- its comments go before the
+            # next condition, rather than being dropped with the wrapper.
+            comments = node.leading_comments + node.trailing_comments
             node = node.expr
     final = node
     lines = []
-    for i, (cond, true_expr) in enumerate(parts):
+    for i, (cond, true_expr, lead) in enumerate(parts):
         true_str = _fmt_expr(true_expr, indent + w, w)
-        prefix = "" if i == 0 else f"{pad}: "
+        prefix = "" if i == 0 else f"{pad}: " + "".join(
+            f"{c}\n{pad}  " if isinstance(c, CommentLine) else f"{c} " for c in lead)
         lines.append(f"{prefix}{_condition(cond)} ?\n{inner_pad}{true_str}")
     lines.append(f"{pad}: {_fmt_expr(final, indent + w, w)}")
     return "\n".join(lines)
@@ -389,36 +402,21 @@ def _fmt_expr(expr, indent: int, w: int) -> str:
                 return f"{left_fmt} {op} {right_fmt}"
     if isinstance(expr, ListComprehension):
         inner_pad = " " * (indent + w)
-        from dataclasses import replace as _dc_replace
-        def _split_lcs(e):
-            if isinstance(e, CommentedExpr):
-                lcs = [c for c in e.leading_comments if isinstance(c, CommentLine)]
-                if lcs:
-                    rest = [c for c in e.leading_comments if not isinstance(c, CommentLine)]
-                    cleaned = (e.expr if not rest and not e.trailing_comments
-                               else _dc_replace(e, leading_comments=rest))
-                    return lcs, cleaned
-            return [], e
-        splits = [_split_lcs(e) for e in expr.elements]
-        has_line_comment = any(lcs for lcs, _ in splits)
-        formatted = [_fmt_list_elem(cleaned, indent + w, w) for _, cleaned in splits]
+        # `//` comments come off each element: one before it goes at the end
+        # of the previous line, one after it after its comma.
+        splits = [_strip_line_comments(e) for e in expr.elements]
+        has_line_comment = any(lead or trail for lead, trail, _ in splits)
+        formatted = [_fmt_list_elem(cleaned, indent + w, w) for _, _, cleaned in splits]
         any_multiline = has_line_comment or any("\n" in fe for fe in formatted)
         if not any_multiline:
             inline = f"[{', '.join(formatted)}]"
             if len(inline) + indent <= _MULTILINE_CHAR_LIMIT:
                 return inline
-        lines = []
-        for i, ((lcs, _), elem_str) in enumerate(zip(splits, formatted)):
+        lines = ["["]
+        for i, ((lcs, trail, _), elem_str) in enumerate(zip(splits, formatted)):
             comma = "" if i == len(expr.elements) - 1 else ","
-            if lcs:
-                comment_str = "  " + "  ".join(str(c) for c in lcs)
-                if lines:
-                    lines[-1] += comment_str
-                else:
-                    for c in lcs:
-                        lines.append(f"{inner_pad}{c}")
-            lines.append(f"{inner_pad}{elem_str}{comma}")
-        return "[\n" + "\n".join(lines) + f"\n{pad}]"
+            _add_item_lines(lines, f"{elem_str}{comma}", lcs, trail, inner_pad)
+        return "\n".join(lines) + f"\n{pad}]"
     return str(expr)
 
 
@@ -550,6 +548,9 @@ def _fmt_child(body, indent: int, w: int, brace_open_if: bool = False) -> str:
 
 def _fmt_inst(node: ModuleInstantiation, indent: int, w: int, prefix: str = "") -> str:
     pad = " " * indent
+
+    if isinstance(node, (CommentLine, CommentSpan, BlankLine)):  # placed in a nested block
+        return _fmt_node(node, indent, w)
 
     if isinstance(node, Assignment):
         return _fmt_node(node, indent, w)
