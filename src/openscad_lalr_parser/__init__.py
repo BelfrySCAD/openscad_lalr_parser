@@ -13,6 +13,8 @@ Usage:
 from __future__ import annotations
 
 import dataclasses
+import contextlib
+import contextvars
 import functools
 import hashlib
 import json
@@ -123,13 +125,44 @@ _GRAMMAR_PATH = Path(__file__).parent / "grammar.lark"
 
 _parser_cache: dict[str, Lark] = {}
 
+# Strict-commas mode: reject the trailing commas OpenSCAD 2021.01 rejected --
+# in a call's arguments and a let/for/intersection_for assignment list --
+# while keeping the ones it accepted: list literals, list comprehensions and
+# parameter declarations (measured against 2021.01; openscad_cpp_parser #9).
+# A context variable rather than a parameter on every entry point, as the C++
+# parser's StrictCommaScope is thread-local: it nests, restores on exit
+# (including when a parse raises), and every cache below keys on it, so a
+# strict parse is never served a lenient tree.
+_STRICT_COMMAS: contextvars.ContextVar[bool] = contextvars.ContextVar("strict_commas", default=False)
+
+
+@contextlib.contextmanager
+def strict_commas(enabled: bool = True):
+    """Parse as OpenSCAD 2021.01 did, rejecting `cube(1,)` and `let(x=1,)`::
+
+        with strict_commas():
+            ast = getASTfromFile("model.scad")
+    """
+    token = _STRICT_COMMAS.set(enabled)
+    try:
+        yield
+    finally:
+        _STRICT_COMMAS.reset(token)
+
 
 def _get_parser() -> Lark:
-    """Get or create the cached Lark LALR parser."""
-    key = "standard"
+    """Get or create the cached Lark LALR parser for the current comma mode."""
+    strict = _STRICT_COMMAS.get()
+    key = "strict" if strict else "standard"
     if key not in _parser_cache:
+        grammar = _GRAMMAR_PATH.read_text()
+        if strict:
+            for rule in ('assignments_expr: (assignment_expr ("," assignment_expr)* ","?)?',
+                         'arguments: (argument ("," argument)* ","?)?'):
+                assert rule in grammar, rule
+                grammar = grammar.replace(rule, rule.replace(' ","?)?', ')?'))
         _parser_cache[key] = Lark(
-            _GRAMMAR_PATH.read_text(),
+            grammar,
             parser="lalr",
             propagate_positions=True,
             maybe_placeholders=False,
@@ -835,8 +868,8 @@ _find_library_file = findLibraryFile
 
 # --- AST caching (in-memory) ---
 
-_ast_cache: dict[tuple[str, bool], tuple[list[ASTNode] | None, float]] = {}
-_resolved_cache: dict[tuple[str, bool, bool], tuple[list[ASTNode] | None, float]] = {}
+_ast_cache: dict[tuple[str, bool, bool], tuple[list[ASTNode] | None, float]] = {}
+_resolved_cache: dict[tuple[str, bool, bool, bool], tuple[list[ASTNode] | None, float]] = {}
 
 
 def clear_ast_cache():
@@ -880,7 +913,7 @@ def _disk_cache_path(file_path: str, include_comments: bool) -> Optional[str]:
     cache_dir = _get_disk_cache_dir()
     if not cache_dir:
         return None
-    key = f"{file_path}:{include_comments}:{_ast_format_tag()}"
+    key = f"{file_path}:{include_comments}:{_STRICT_COMMAS.get()}:{_ast_format_tag()}"
     h = hashlib.sha256(key.encode()).hexdigest()[:16]
     return os.path.join(cache_dir, f"{h}.pickle")
 
@@ -991,7 +1024,7 @@ def _parse_single_file(file_path: str, include_comments: bool = False) -> list[A
         raise FileNotFoundError(f"File {file_path} not found")
 
     current_mtime = os.path.getmtime(file_path)
-    cache_key = (file_path, include_comments)
+    cache_key = (file_path, include_comments, _STRICT_COMMAS.get())
 
     if cache_key in _ast_cache:
         cached_ast, cached_mtime = _ast_cache[cache_key]
@@ -1079,7 +1112,7 @@ def getASTfromFile(file: str, include_comments: bool = False, process_includes: 
     if not process_includes:
         return _parse_single_file(file_path, include_comments)
 
-    resolved_key = (file_path, include_comments, True)
+    resolved_key = (file_path, include_comments, True, _STRICT_COMMAS.get())
     if resolved_key in _resolved_cache:
         cached_ast, cached_mtime = _resolved_cache[resolved_key]
         if cached_mtime == current_mtime:

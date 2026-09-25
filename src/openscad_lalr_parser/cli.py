@@ -1,7 +1,7 @@
 """Command-line interface for openscad_lalr_parser."""
 import sys
 import argparse
-from openscad_lalr_parser import getASTfromString, getASTfromFile, ast_to_json
+from openscad_lalr_parser import getASTfromString, getASTfromFile, ast_to_json, strict_commas
 from openscad_lalr_parser.pretty_print import to_openscad
 
 
@@ -46,6 +46,11 @@ def main():
         help="Do not expand include <...> statements (keeps IncludeStatement nodes).",
     )
     ap.add_argument(
+        "--strict-commas", action="store_true",
+        help="Reject the trailing commas OpenSCAD 2021.01 rejected (call arguments, "
+             "let/for assignments); list literals and parameter lists keep theirs.",
+    )
+    ap.add_argument(
         "--indent", type=int, default=4, metavar="N",
         help="Indentation width in spaces (default: 4). Applies to --format and --json.",
     )
@@ -63,15 +68,16 @@ def main():
         args.include_comments = True
 
     try:
-        if args.file is None or args.file == "-":
-            code = sys.stdin.read()
-            ast = getASTfromString(code, include_comments=args.include_comments)
-        else:
-            ast = getASTfromFile(
-                args.file,
-                include_comments=args.include_comments,
-                process_includes=not args.no_includes,
-            )
+        with strict_commas(args.strict_commas):
+            if args.file is None or args.file == "-":
+                code = sys.stdin.read()
+                ast = getASTfromString(code, include_comments=args.include_comments)
+            else:
+                ast = getASTfromFile(
+                    args.file,
+                    include_comments=args.include_comments,
+                    process_includes=not args.no_includes,
+                )
     except OSError as e:
         print(f"openscad-lalr: {e}", file=sys.stderr)
         sys.exit(1)

@@ -175,6 +175,7 @@ openscad-lalr --no-includes model.scad
 | `parse_ast(code, origin="<string>")` | Low-level parse returning AST nodes (no comment processing). |
 | `findLibraryFile(currfile, libfile)` | Find a library file path without parsing it. |
 | `librarySearchDirs(currfile)` | The directories searched, in order: the including file's, each `OPENSCADPATH` entry, then the user's OpenSCAD libraries folder (as OpenSCAD orders them). |
+| `strict_commas(enabled=True)` | Context manager: parse as OpenSCAD 2021.01 did, rejecting a trailing comma in call arguments and `let`/`for`/`intersection_for` assignments (`cube(1,)`, `let(x=1,)`), while list literals, comprehensions and parameter lists keep theirs. Nests, restores on exit, and is part of every cache key. CLI: `--strict-commas`. |
 | `clear_ast_cache()` | Clear the in-memory and on-disk AST caches. |
 
 ### Serialization Functions
