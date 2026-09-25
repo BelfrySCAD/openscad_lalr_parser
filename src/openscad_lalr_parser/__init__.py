@@ -206,6 +206,60 @@ _SKIP_FIELDS = frozenset(('position', 'scope', 'leading_comments', 'trailing_com
                            'pre_name_comments', 'post_name_comments', 'post_params_comments'))
 
 
+_STATEMENT_LIST_FIELDS = ("children", "body", "true_branch", "false_branch")
+_STATEMENT_TYPES = (ModuleInstantiation, ModuleDeclaration, FunctionDeclaration)
+
+
+def _place_statement_comment(stmts: list, comment: CommentLine, code: str) -> bool:
+    """Put `comment` into the statement list where it falls BETWEEN statements
+    (after the one it follows), descending into nested blocks. False when it
+    falls inside a statement's non-block part -- an argument list, a
+    condition -- where expression attachment handles it."""
+    cs = comment.position.start_offset
+    last_before = None
+    for i, node in enumerate(stmts):
+        if isinstance(node, (CommentLine, CommentSpan, BlankLine)):
+            continue
+        pos = node.position
+        if pos.start_offset <= cs < pos.end_offset:
+            return _place_in_statement(node, comment, code)
+        if pos.end_offset <= cs:
+            last_before = i
+    if last_before is None:
+        return False
+    j = last_before + 1
+    while j < len(stmts) and isinstance(stmts[j], CommentLine) and stmts[j].same_line:
+        j += 1  # after comments already placed there
+    comment.same_line = True
+    stmts.insert(j, comment)
+    return True
+
+
+def _place_in_statement(node, comment: CommentLine, code: str) -> bool:
+    child = getattr(node, "child", None)  # the #/%/!/* modifiers wrap one statement
+    if isinstance(child, ASTNode):
+        return _place_in_statement(child, comment, code)
+    # The block the comment is in: the last one starting before it (an if/else
+    # has two). None means it sits before every block, in the statement's head.
+    cs = comment.position.start_offset
+    block = next_block = None
+    for name in _STATEMENT_LIST_FIELDS:
+        stmts = getattr(node, name, None)
+        if isinstance(stmts, list) and stmts and isinstance(stmts[0], ASTNode):
+            if stmts[0].position.start_offset <= cs:
+                block = stmts
+            elif next_block is None:
+                next_block = stmts
+    if block is not None:
+        return _place_statement_comment(block, comment, code)
+    if next_block is not None and code[:cs].rstrip().endswith("{"):
+        # `module m() { // why` -- it ends the block's opening line
+        comment.same_line = True
+        next_block.insert(0, comment)
+        return True
+    return False
+
+
 def _attach_inline_comments(ast_nodes: list[ASTNode], inline_comments: list[ASTNode]) -> list[ASTNode]:
     """Walk AST and wrap expressions adjacent to inline comments in CommentedExpr."""
     if not inline_comments:
@@ -306,6 +360,8 @@ def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
     for f in dataclasses.fields(node):
         if f.name in _SKIP_FIELDS:
             continue
+        if f.name == "step" and getattr(node, "implicit_step", False):
+            continue  # synthesized for [a:b]; it spans the whole range and would swallow its comments
         val = getattr(node, f.name)
         if isinstance(val, Expression) and not isinstance(val, CommentedExpr):
             expr_fields.append((node, f.name, None, val))
@@ -315,6 +371,12 @@ def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
             for idx, item in enumerate(val):
                 if isinstance(item, Expression) and not isinstance(item, CommentedExpr):
                     expr_fields.append((node, f.name, idx, item))
+                elif isinstance(item, _STATEMENT_TYPES):
+                    # A child statement: its own walk attaches its comments.
+                    # Mined here, its NAME became one of this node's
+                    # expressions, and a comment in this node's arguments
+                    # landed on it (`translate([1, // c` ... `cube // c(1);`).
+                    non_expr_children.append(item)
                 elif isinstance(item, ASTNode):
                     _collect_container_exprs(item, expr_fields, non_expr_children)
 
@@ -340,6 +402,10 @@ def _walk_attach(node: ASTNode, comments: list[ASTNode], used: set[int]):
                 break
             elif cs >= expr.position.end_offset:
                 continue
+            # Inside this expression: the recursion below attaches it within.
+            # Falling through made it the NEXT expression's leading comment.
+            attached = True
+            break
         if not attached and expr_fields:
             last_ei = len(expr_fields) - 1
             if cs >= expr_fields[last_ei][3].position.end_offset:
@@ -524,6 +590,11 @@ def _attach_all_comments(ast: list[ASTNode], code: str, origin: str) -> list[AST
     _attach_declaration_comments(ast, code, comments)
     comments = [c for c in comments if c is not None]
     inline, standalone = _classify_comments(comments, code)
+    # A `//` comment ending a statement's line belongs to the statement list,
+    # after that statement -- not wrapped round the statement's last
+    # expression, which printed it before the `;` (`x = 1 // c;`) or, with a
+    # child module, after the child's NAME (`cube // c(1);`).
+    inline = [c for c in inline if not (isinstance(c, CommentLine) and _place_statement_comment(ast, c, code))]
     _attach_inline_comments(ast, inline)
     return _inject_comments(ast, standalone, code, origin)
 
