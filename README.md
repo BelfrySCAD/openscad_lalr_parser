@@ -93,7 +93,20 @@ root_scope = build_scopes(ast)
 print(root_scope.lookup_variable("x"))
 print(root_scope.lookup_function("double"))
 print(root_scope.lookup_module("box"))
+
+# A node's enclosing scope, as this pass built it
+box = ast[2]
+print(root_scope.scope_of(box.children[0]).lookup_variable("size"))
 ```
+
+A node's scope is not an attribute of the node: an included file is parsed
+once and its nodes are shared by every file that includes it, but `include`
+puts them in the *includer's* scope. Each `build_scopes()` call records into
+its own `ScopeTable` (`root_scope.table`), so two files including the same
+library can be scoped and used at once. `build_scopes_into(ast, table)`
+records into a table you own, for several roots read back together (one per
+`use`d file). Before 2.0, `node.scope` held whichever file's scope was built
+last.
 
 ### Serialization
 
@@ -195,6 +208,7 @@ openscad-lalr --no-includes model.scad
 | Function / Class | Description |
 |---|---|
 | `build_scopes(ast)` | Build scope tree for top-level AST nodes. Returns root `Scope`. |
+| `build_scopes_into(ast, table)` | The same, recording into a `ScopeTable` the caller owns. |
 | `Scope` | Lexical scope with `lookup_variable()`, `lookup_function()`, `lookup_module()`. |
 
 ### AST Node Classes

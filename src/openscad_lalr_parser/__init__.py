@@ -105,7 +105,7 @@ from .nodes import (
     IncludeStatement,
 )
 
-from .scope import Scope, build_scopes
+from .scope import Scope, ScopeTable, build_scopes, build_scopes_into
 from .transformer import OpenSCADTransformer
 from .source_map import SourceMap, SourceSegment, create_source_map_from_origins, process_includes as process_includes_func
 from .pretty_print import to_openscad
