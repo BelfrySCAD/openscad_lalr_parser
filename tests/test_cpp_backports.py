@@ -2,6 +2,8 @@
 import os
 import platform
 
+import openscad_lalr_parser
+
 import pytest
 
 from openscad_lalr_parser import (
@@ -51,6 +53,9 @@ class TestBackslashNewlineInString:
         assert [type(n).__name__ for n in ast] == ["Assignment", "Assignment"]
 
 
+BUNDLED = os.path.join(os.path.dirname(os.path.abspath(openscad_lalr_parser.__file__)), "libraries")
+
+
 class TestLibrarySearch:
     @pytest.fixture
     def home(self, tmp_path, monkeypatch):
@@ -71,7 +76,7 @@ class TestLibrarySearch:
         (default / "both.scad").write_text("x = 1;")
         (env_dir / "both.scad").write_text("x = 2;")
         main = home / "main.scad"
-        assert librarySearchDirs(str(main)) == [str(home), str(env_dir), str(default)]
+        assert librarySearchDirs(str(main)) == [str(home), str(env_dir), str(default), BUNDLED]
         assert findLibraryFile(str(main), "BOSL2.scad") == str(default / "BOSL2.scad")  # was hidden
         assert findLibraryFile(str(main), "both.scad") == str(env_dir / "both.scad")
 
@@ -80,7 +85,7 @@ class TestLibrarySearch:
         monkeypatch.setattr(platform, "system", lambda: "Windows")
         monkeypatch.setattr(p, "_windows_documents_dir", lambda: "D:\\OneDrive\\Documents")
         monkeypatch.delenv("OPENSCADPATH", raising=False)
-        assert librarySearchDirs("") == [os.path.join("D:\\OneDrive\\Documents", "OpenSCAD", "libraries")]
+        assert librarySearchDirs("") == [os.path.join("D:\\OneDrive\\Documents", "OpenSCAD", "libraries"), BUNDLED]
 
     def test_not_found_lists_every_directory(self, home):
         main = home / "main.scad"
@@ -88,7 +93,20 @@ class TestLibrarySearch:
         with pytest.raises(FileNotFoundError) as e:
             getASTfromLibraryFile(str(main), "nope.scad")
         assert str(e.value) == ("Library file 'nope.scad' not found. Searched:\n"
-                                f"  {home}\n  {home / 'Documents' / 'OpenSCAD' / 'libraries'}")
+                                f"  {home}\n  {home / 'Documents' / 'OpenSCAD' / 'libraries'}\n  {BUNDLED}")
+
+    def test_libraries_beside_the_package_are_searched_last(self, home, monkeypatch):
+        import openscad_lalr_parser as p
+        bundled = home / "pkg" / "libraries"
+        bundled.mkdir(parents=True)
+        (bundled / "shipped.scad").write_text("x = 1;")
+        (bundled / "both.scad").write_text("x = 2;")
+        default = home / "Documents" / "OpenSCAD" / "libraries"
+        (default / "both.scad").write_text("x = 1;")
+        monkeypatch.setattr(p, "_BUNDLED_LIBRARY_DIR", str(bundled))
+        main = str(home / "main.scad")
+        assert findLibraryFile(main, "shipped.scad") == str(bundled / "shipped.scad")
+        assert findLibraryFile(main, "both.scad") == str(default / "both.scad")
 
 
 class TestRangeStepWritten:
