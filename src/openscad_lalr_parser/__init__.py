@@ -809,10 +809,15 @@ def _windows_documents_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Documents")
 
 
+_BUNDLED_LIBRARY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libraries")
+
+
 def librarySearchDirs(currfile: str) -> list[str]:
     """The directories `include`/`use` search, in order, as OpenSCAD's
     parser_init() builds them: the including file's own directory, then
-    every OPENSCADPATH entry, then the user's libraries folder.
+    every OPENSCADPATH entry, then the user's libraries folder, then
+    libraries shipped beside this package (OpenSCAD's
+    resourcePath("libraries")).
 
     OPENSCADPATH adds to the libraries folder rather than replacing it --
     it used to replace it, so setting it for one library hid every other
@@ -835,6 +840,8 @@ def librarySearchDirs(currfile: str) -> list[str]:
         dirs.append(os.path.expanduser("~/Documents/OpenSCAD/libraries"))
     elif system == "Linux":
         dirs.append(os.path.expanduser("~/.local/share/OpenSCAD/libraries"))
+    # ponytail: only the folder beside the package, no ../share/openscad walk
+    dirs.append(_BUNDLED_LIBRARY_DIR)
     return dirs
 
 
